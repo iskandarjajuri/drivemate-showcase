@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "maxChars": 1000,
+  "quota": {"perUserPerDay": 300},
+  "provider": {
+    "name": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "path": "/chat/completions",
+    "model": "deepseek-flash",
+    "extraBody": {"thinking": {"type": "disabled"}},
+    "temperature": 0.2,
+    "maxTokens": 2048,
+    "timeoutMs": 20000,
+    "maxRetries": 1
+  },
+  "registerMap": {
+    "ja_keigo_to_id": "formal and respectful Indonesian (e.g. 'Mohon konfirmasinya.')",
+    "ja_polite_to_id": "standard polite Indonesian (e.g. 'Besok berangkat jam 6 ya.')",
+    "ja_plain_to_id": "casual but firm Indonesian; never rude, never over-polite",
+    "id_formal_to_ja": "teineigo / kenjougo Japanese (a driver writing to an expat must stay respectful)",
+    "id_casual_to_ja": "light desu/masu Japanese; NOT plain form and NOT heavy keigo"
+  },
+  "glossary": [
+    {"id": "checklist kendaraan", "ja": "車両点検チェックリスト"},
+    {"id": "presensi", "ja": "出退勤打刻"},
+    {"id": "deklarasi keselamatan", "ja": "安全宣言"},
+    {"id": "lembur", "ja": "残業"},
+    {"id": "SOP", "ja": "SOP（標準作業手順）"},
+    {"id": "Driver", "ja": "ドライバー"},
+    {"id": "Expat", "ja": "駐在員"}
+  ],
+  "keepAsIs": ["DriveMate"]
+}

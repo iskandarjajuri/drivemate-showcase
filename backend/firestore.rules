@@ -1,0 +1,2060 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    // =========================
+    // Helpers
+    // =========================
+    function signedIn() { return request.auth != null; }
+
+    function userDoc(uid) {
+      return get(/databases/$(db)/documents/users/$(uid));
+    }
+
+    function userExists(uid) {
+      return exists(/databases/$(db)/documents/users/$(uid));
+    }
+
+    // roleLower() may use get(users/{request.auth.uid}) because self-read is explicit.
+    function roleLower() {
+      return signedIn()
+        && userExists(request.auth.uid)
+        && userDoc(request.auth.uid).data.type is string
+        ? userDoc(request.auth.uid).data.type.lower()
+        : "unknown";
+    }
+
+    function isAdmin() { return roleLower() == "admin"; }
+    function isDriver(){ return roleLower() == "driver"; }
+    function isExpat() { return roleLower() in ["expat", "expatriate", "expatriat"]; }
+
+    // Expat hanya boleh akses driver yang managerUid == expatUid
+    function isManagedDriver(driverUid) {
+      return signedIn()
+        && userExists(driverUid)
+        && userDoc(driverUid).data.type is string
+        && userDoc(driverUid).data.type == "driver"
+        && userDoc(driverUid).data.managerUid is string
+        && userDoc(driverUid).data.managerUid == request.auth.uid;
+    }
+
+    function userRoleLower(uid) {
+      return userExists(uid)
+        && userDoc(uid).data.type is string
+        ? userDoc(uid).data.type.lower()
+        : "unknown";
+    }
+
+    function isDriverOrExpatRole(role) {
+      return role in ["driver", "expat", "expatriate", "expatriat"];
+    }
+
+    function hasOnlyAllowed(keys, allowed) {
+      return keys.hasOnly(allowed);
+    }
+
+    function isYearId(yearId) {
+      return yearId.matches('^\\d{4}$');
+    }
+
+    function yearMatchesDocId(yearId) {
+      return request.resource.data.year is int
+        && request.resource.data.year == int(yearId);
+    }
+
+    function isUidEpochDocId(docId, uid) {
+      return docId.split('_').size() == 2
+        && docId.split('_')[0] == uid
+        && docId.split('_')[1].matches('^[0-9]+$');
+    }
+
+    function isCanonicalUidEpochDocId(docId, uid, epochDay) {
+      return isUidEpochDocId(docId, uid)
+        && int(docId.split('_')[1]) == epochDay;
+    }
+
+    // =========================
+    // users/{uid}
+    // =========================
+    // =========================
+    // fcm_tokens/{sha256Hex(token)} — token FCM PRIVAT (id dokumen = hash token => satu token = satu pemilik).
+    // TIDAK ada klien yang boleh membaca/list: tak seorang pun bisa mengetahui token orang lain, jadi bukti
+    // "tahu token" cukup untuk mengklaim ulang perangkat bersama oleh pengguna berikutnya. Server membaca via Admin SDK.
+    // ID WAJIB = hash token (tanpa ini siapa pun yang tahu hash korban bisa menimpa dokumennya); token tak berubah
+    // saat update; pembuat harus punya dokumen `users` (menahan akun kosong dari spam dokumen).
+    // =========================
+    match /fcm_tokens/{tokenId} {
+      function validFcmTokenDoc() {
+        return signedIn()
+          && userExists(request.auth.uid)
+          && request.resource.data.keys().hasAll(['uid', 'token', 'platform', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['uid', 'token', 'platform', 'appVersion', 'source', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.token is string
+          && request.resource.data.token.size() >= 50
+          && request.resource.data.token.size() <= 600
+          && request.resource.data.token.matches('^[A-Za-z0-9_:\\-]+$')
+          && tokenId == hashing.sha256(request.resource.data.token).toHexString().lower()
+          && request.resource.data.platform in ['android', 'ios']
+          && request.resource.data.updatedAt == request.time
+          && (!('appVersion' in request.resource.data)
+            || (request.resource.data.appVersion is string && request.resource.data.appVersion.size() <= 32))
+          && (!('source' in request.resource.data) || request.resource.data.source == 'client');
+      }
+
+      allow read: if false;
+      allow create: if validFcmTokenDoc();
+      // Update HANYA oleh pemilik dokumen (tinjauan keamanan #1): mengetahui token bukan bukti memegang perangkat —
+      // token legacy sempat terbaca lewat `users.fcmToken` — jadi dokumen milik orang lain tak bisa diambil alih.
+      // Perangkat bersama: logout menghapus dokumen + `deleteToken()` (token baru → dokumen baru).
+      allow update: if validFcmTokenDoc()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.token == resource.data.token;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      // Admin boleh read semua, user boleh read dirinya sendiri.
+      // Expat boleh read driver yang dikelola (managerUid == expatUid).
+      // IMPORTANT: keep self-get short-circuiting so roleLower() is never evaluated for self reads.
+      allow get: if signedIn() && (
+        // Self-read must not depend on role()/get()/exists() to avoid circular checks.
+        uid == request.auth.uid
+        // Admin can read any other user.
+        || (uid != request.auth.uid && isAdmin())
+        // Expat can read only managed drivers.
+        || (uid != request.auth.uid
+          && isExpat()
+          && resource != null
+          && resource.data.type == "driver"
+          && resource.data.managerUid == request.auth.uid
+        )
+      );
+
+      // List users:
+      // - Admin can list all users.
+      // - Expat can list only managed drivers.
+      allow list: if signedIn() && (
+        isAdmin()
+        || (isExpat()
+          && resource != null
+          && ('type' in resource.data)
+          && (resource.data.type is string)
+          && resource.data.type == "driver"
+          && ('managerUid' in resource.data)
+          && (resource.data.managerUid is string)
+          && resource.data.managerUid == request.auth.uid
+        )
+        || ((isDriver() || isExpat())
+          && resource != null
+          && ('type' in resource.data)
+          && (resource.data.type is string)
+          && resource.data.type == "admin"
+        )
+      );
+
+      // Himpunan field `users` yang SAH, dikumpulkan dari sumber nyata di repo ini
+      // (bukan tebakan). Dipakai dua kali: `validUserCreate()` di bawah dan pembatasan
+      // key pada cabang admin `allow update`.
+      //   type                  -> dibaca rules sendiri (roleLower/isManagedDriver) +
+      //                            FirestoreServiceImpl.getUserTypeByUid()
+      //   managerUid            -> isManagedDriver() + functions/src/index.ts (resolve expat)
+      //   name                  -> FirebaseUserDirectoryRepository + index.ts (nama notifikasi)
+      //   email                 -> FirebaseUserDirectoryRepository + tools/backfill_driver_email.ts
+      //   sopAccepted          -> validDriverSopAcknowledgement() + acceptSop()
+      //   sopAcceptedAtMillis   -> idem
+      //
+      // Bentuk dokumen divalidasi, bukan cuma role penulisnya: `allow create` yang lama
+      // hanya `signedIn() && isAdmin()` — tanpa validasi apa pun — sehingga admin bisa
+      // membuat dokumen user berisi field arbitrer (DIBUKTIKAN EMPIRIS, Gerbang 18).
+      // Itu lebih berat daripada koleksi lain karena dokumen `users/{uid}` DIBACA oleh
+      // rules ini sendiri untuk keputusan otorisasi.
+      //
+      // Wajib hanya `type`: itu satu-satunya field yang rules butuhkan untuk memutuskan
+      // peran. `managerUid` khusus driver, jadi mewajibkannya akan memblokir pembuatan
+      // admin/expat.
+      function validUserCreate() {
+        return request.resource.data.keys().hasAll(['type'])
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'type',
+                 'managerUid',
+                 'name',
+                 'email',
+                 'sopAccepted',
+                 'sopAcceptedAtMillis'
+               ]
+             )
+          && request.resource.data.type is string
+          && (!('managerUid' in request.resource.data)
+            || request.resource.data.managerUid is string)
+          && (!('name' in request.resource.data)
+            || request.resource.data.name is string)
+          && (!('email' in request.resource.data)
+            || request.resource.data.email is string)
+          && (!('sopAccepted' in request.resource.data)
+            || request.resource.data.sopAccepted is bool)
+          && (!('sopAcceptedAtMillis' in request.resource.data)
+            || request.resource.data.sopAcceptedAtMillis is int);
+      }
+
+      // Untuk sekarang: hanya admin yang boleh create user (biar rapi)
+      allow create: if signedIn() && isAdmin() && validUserCreate();
+
+      function validDriverSopAcknowledgement() {
+        return request.resource.data.sopAccepted == true
+          && request.resource.data.sopAcceptedAtMillis is int
+          && (!('sopAccepted' in resource.data) || resource.data.sopAccepted != true);
+      }
+
+      // Token FCM TIDAK lagi ditulis ke `users/{uid}`: satu-satunya jalur registrasi adalah
+      // `fcm_tokens/{sha256Hex(token)}` (lihat di atas). Tulis-sendiri legacy `users.fcmToken`
+      // sudah DICABUT (temuan keamanan #1); tak satu pun cabang `allow update`/`allow create`
+      // di bawah, termasuk admin, mengizinkan field itu.
+
+      // Driver may acknowledge only their own SOP without changing any profile field.
+      //
+      // affectedKeys(), not changedKeys(): changedKeys() silently omits a field the
+      // write ADDS that didn't exist before (verified empirically against the
+      // emulator), so a driver whose doc has no managerUid yet could bundle
+      // an arbitrary managerUid into this "SOP-only" write and have it slip
+      // through undetected. affectedKeys() (added+removed+changed) closes it.
+      allow update: if signedIn() && (
+        (isDriver() && uid == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['sopAccepted','sopAcceptedAtMillis']) &&
+          validDriverSopAcknowledgement()
+        )
+        // Cabang admin: SENGAJA membolehkan admin mengubah `type`/`managerUid` — itu
+        // manajemen peran/penugasan dan harus tetap bisa. Yang ditutup di sini cuma
+        // add-field liar: cabang ini dulunya `isAdmin()` telanjang, tanpa pembatasan
+        // key, sehingga admin bisa menyuntik field tak-terdaftar ke dokumen user mana
+        // pun (DIBUKTIKAN EMPIRIS, Gerbang 18). Daftar key-nya sama dengan
+        // `validUserCreate()`; asal tiap field didokumentasikan di sana.
+        //
+        // `affectedKeys()`, bukan `changedKeys()` — alasan yang sama seperti cabang SOP
+        // di atas: `changedKeys()` melewatkan field yang DITAMBAHKAN write ini, padahal
+        // justru itu yang sedang ditutup.
+        || (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly([
+                 'type',
+                 'managerUid',
+                 'name',
+                 'email',
+                 'sopAccepted',
+                 'sopAcceptedAtMillis'
+               ])
+        )
+      );
+
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // announcements/{doc}
+    // simple admin broadcast feed
+    // =========================
+    match /announcements/{doc} {
+      function validAnnouncementDocument() {
+        return request.resource.data.keys().hasAll(
+                 ['title', 'body', 'createdAtMillis', 'createdByUid']
+               )
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               ['title', 'body', 'createdAtMillis', 'createdByUid', 'createdByName', 'createdByEmail']
+             )
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 2000
+          && request.resource.data.createdAtMillis is int
+          && request.resource.data.createdByUid is string
+          && request.resource.data.createdByUid == request.auth.uid
+          && (!('createdByName' in request.resource.data)
+            || request.resource.data.createdByName is string)
+          && (!('createdByEmail' in request.resource.data)
+            || request.resource.data.createdByEmail is string);
+      }
+
+      // Only title and body may change; authorship and timestamp are immutable.
+      //
+      // `hasOnlyAllowed` menutup add-field: tanpa itu admin bisa menyisipkan field
+      // tak-terdaftar (mis. `isPinned`) lewat update — DIBUKTIKAN EMPIRIS di emulator
+      // (Gerbang 18, 17 Sep 2026), sementara `create` di bawah sudah dijaga. Ini
+      // inkonsistensi update-vs-create, bukan kebijakan yang disengaja.
+      //
+      // Daftarnya SAMA PERSIS dengan `validAnnouncementDocument()`, dan itu disengaja:
+      // pada update, `request.resource.data` adalah dokumen hasil-tulis yang UTUH
+      // (bukan delta), jadi daftar yang lebih sempit akan menolak update sah atas
+      // dokumen yang memang punya `createdByName`/`createdByEmail` dari create-nya.
+      function validAnnouncementUpdate() {
+        return hasOnlyAllowed(
+                 request.resource.data.keys(),
+                 ['title', 'body', 'createdAtMillis', 'createdByUid', 'createdByName', 'createdByEmail']
+               )
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 2000
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdAtMillis == resource.data.createdAtMillis;
+      }
+
+      allow read: if signedIn() && (isAdmin() || isDriver() || isExpat());
+      allow create: if signedIn() && isAdmin() && validAnnouncementDocument();
+      allow update: if signedIn() && isAdmin() && validAnnouncementUpdate();
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // chat_threads/{threadId} — 1:1 chat bebas antar SEMUA peran (admin/driver/expat).
+    // Dokumen thread & reads ditulis klien secara terbatas; sisanya oleh Cloud Function.
+    // =========================
+    match /chat_threads/{threadId} {
+      function threadParticipants(threadId) {
+        return threadId.split('__').size() == 2
+          ? [threadId.split('__')[0], threadId.split('__')[1]]
+          : [];
+      }
+
+      function isValidChatRole(role) {
+        return role in ["admin", "driver", "expat", "expatriate", "expatriat"];
+      }
+
+      function validThreadParticipantPair(threadId) {
+        return threadParticipants(threadId).size() == 2
+          && threadParticipants(threadId)[0] != threadParticipants(threadId)[1]
+          && isValidChatRole(userRoleLower(threadParticipants(threadId)[0]))
+          && isValidChatRole(userRoleLower(threadParticipants(threadId)[1]));
+      }
+
+      function isParticipant(threadId) {
+        return threadParticipants(threadId).hasAny([request.auth.uid]);
+      }
+
+      // Dokumen thread (participantUids, lastMessage, unread) DITULIS HANYA OLEH FUNCTION.
+      // Klien boleh get (jika peserta) dan list (jika query membatasi participantUids).
+      // `uid in resource.data.<array>` adalah satu-satunya bentuk yang dipahami evaluator query
+      // untuk `where(participantUids, array-contains, uid)`; `hasAny([uid])` ditolak
+      // (PERMISSION_DENIED di perangkat, "false for 'list'" di emulator).
+      allow get: if signedIn() && isParticipant(threadId);
+      allow list: if signedIn()
+        && request.auth.uid in resource.data.participantUids;
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        function requestParticipantsMatchThread(threadId) {
+          return request.resource.data.participantUids is list
+            && request.resource.data.participantUids.size() == 2
+            && request.resource.data.participantUids.hasAll(threadParticipants(threadId));
+        }
+
+        function resourceMatchesThread(threadId) {
+          return resource != null
+            && ('threadId' in resource.data)
+            && resource.data.threadId == threadId
+            && ('participantUids' in resource.data)
+            && resource.data.participantUids is list
+            && resource.data.participantUids.size() == 2
+            && resource.data.participantUids.hasAll(threadParticipants(threadId));
+        }
+
+        function validChatMessageDocument() {
+          return request.resource.data.keys().hasAll(
+                   ['threadId', 'participantUids', 'senderUid', 'body', 'createdAtMillis']
+                 )
+            && hasOnlyAllowed(
+                 request.resource.data.keys(),
+                 ['threadId', 'participantUids', 'senderUid', 'senderName', 'body', 'createdAtMillis']
+               )
+            && request.resource.data.threadId is string
+            && request.resource.data.threadId == threadId
+            && request.resource.data.senderUid is string
+            && request.resource.data.senderUid == request.auth.uid
+            && request.resource.data.body is string
+            && request.resource.data.body.size() > 0
+            && request.resource.data.body.size() <= 2000
+            && request.resource.data.createdAtMillis is int
+            && (!('senderName' in request.resource.data)
+              || request.resource.data.senderName is string)
+            && validThreadParticipantPair(threadId)
+            && requestParticipantsMatchThread(threadId)
+            && threadParticipants(threadId).hasAny([request.auth.uid]);
+        }
+
+        function validMessageDeleteUpdate() {
+          return resource != null
+            && ('senderUid' in resource.data)
+            && resource.data.senderUid == request.auth.uid
+            && (!('deleted' in resource.data) || resource.data.deleted != true)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAtMillis'])
+            && ('deleted' in request.resource.data)
+            && request.resource.data.deleted == true
+            && ('deletedAtMillis' in request.resource.data)
+            && request.resource.data.deletedAtMillis is int;
+        }
+
+        allow get: if signedIn()
+          && validThreadParticipantPair(threadId)
+          && threadParticipants(threadId).hasAny([request.auth.uid])
+          && resourceMatchesThread(threadId);
+        allow list: if signedIn()
+          && validThreadParticipantPair(threadId)
+          && threadParticipants(threadId).hasAny([request.auth.uid]);
+        allow create: if signedIn() && validChatMessageDocument();
+        allow update: if signedIn()
+          && validThreadParticipantPair(threadId)
+          && threadParticipants(threadId).hasAny([request.auth.uid])
+          && resourceMatchesThread(threadId)
+          && validMessageDeleteUpdate();
+        allow delete: if false;
+      }
+
+      match /reads/{uid} {
+        function validReadDocument() {
+          return request.resource.data.keys().hasOnly(['lastReadAtMillis', 'hiddenMessageIds'])
+            && (!('lastReadAtMillis' in request.resource.data)
+              || request.resource.data.lastReadAtMillis is int)
+            && (!('hiddenMessageIds' in request.resource.data)
+              || (request.resource.data.hiddenMessageIds is list
+                && request.resource.data.hiddenMessageIds.size() <= 500));
+        }
+
+        allow get: if signedIn() && isParticipant(threadId);
+        allow list: if signedIn() && isParticipant(threadId);
+        allow create, update: if signedIn()
+          && uid == request.auth.uid
+          && isParticipant(threadId)
+          && validReadDocument();
+        allow delete: if false;
+      }
+    }
+
+    // =========================
+    // user_directory/{uid} — direktori kontak minimal (tanpa email/field sensitif).
+    // Ditulis HANYA oleh Cloud Function; dibaca semua user ter-sign-in.
+    // =========================
+    match /user_directory/{uid} {
+      allow get, list: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    // =========================
+    // locations/{uid}
+    // snapshot posisi terbaru per driver
+    // =========================
+    match /locations/{uid} {
+      // Admin boleh list/query semua lokasi.
+      // Expat hanya boleh baca lokasi driver yang dia manage.
+      // Driver hanya boleh baca lokasi dirinya sendiri (get saja).
+      allow list: if signedIn() && isAdmin();
+      allow get: if signedIn() && (
+        isAdmin()
+        || (isExpat() && isManagedDriver(uid))
+        || (isDriver() && uid == request.auth.uid)
+      );
+
+      function validLocationDocument() {
+        return request.resource.data.keys().hasAll(
+                 ['driverUid', 'latitude', 'longitude', 'updatedAtMillis']
+               )
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'driverUid',
+                 'latitude',
+                 'longitude',
+                 'updatedAtMillis',
+                 'speedMps',
+                 'speedKph',
+                 'headingDeg',
+                 'accuracyM',
+                 'locationName'
+               ]
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.driverUid == uid
+          && request.resource.data.latitude is number
+          && request.resource.data.longitude is number
+          && request.resource.data.updatedAtMillis is int
+          && (!('speedMps' in request.resource.data)
+            || request.resource.data.speedMps is number)
+          && (!('speedKph' in request.resource.data)
+            || request.resource.data.speedKph is number)
+          && (!('headingDeg' in request.resource.data)
+            || request.resource.data.headingDeg is number)
+          && (!('accuracyM' in request.resource.data)
+            || request.resource.data.accuracyM is number)
+          && (!('locationName' in request.resource.data)
+            || request.resource.data.locationName is string);
+      }
+
+      function validLocationWrite() {
+        return signedIn()
+          && isDriver()
+          && uid == request.auth.uid
+          && validLocationDocument();
+      }
+
+      function validLocationUpdate() {
+        return validLocationWrite()
+          && request.resource.data.driverUid == resource.data.driverUid
+          // affectedKeys(), bukan changedKeys(): pertahanan berlapis terhadap
+          // "allowlist drift". Hari ini daftar update == daftar dokumen-penuh
+          // minus field yang dipin, jadi tidak ada celah add-field. Namun bila kelak
+          // sebuah field ditambahkan ke validLocationDocument() tanpa ikut di sini
+          // (pola kegagalan managerUid, lihat L200-205), affectedKeys() mencegahnya
+          // menjadi lubang add-field. Tak ada perubahan perilaku untuk key in-schema.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+               [
+                 'latitude',
+                 'longitude',
+                 'updatedAtMillis',
+                 'speedMps',
+                 'speedKph',
+                 'headingDeg',
+                 'accuracyM',
+                 'locationName'
+               ]
+             );
+      }
+
+      allow create: if validLocationWrite();
+      allow update: if validLocationUpdate();
+      allow delete: if signedIn() && (
+        isAdmin()
+        || (isDriver() && uid == request.auth.uid)
+      );
+    }
+
+    // =========================
+    // attendances/{autoId}
+    // tap in / tap out
+    // =========================
+    match /attendances/{doc} {
+      // Admin read semua.
+      // Expat read hanya driver yang dia manage (berdasarkan resource.data.driverUid).
+      // Driver read milik sendiri.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && resource.data.driverUid == request.auth.uid)
+      );
+
+      function validAttendanceDocument() {
+        return request.resource.data.keys().hasAll(
+                 ['driverUid', 'timestampMillis', 'type', 'note']
+               )
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               ['driverUid', 'timestampMillis', 'type', 'note', 'latitude', 'longitude', 'locationName']
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.timestampMillis is int
+          && request.resource.data.type is string
+          && (request.resource.data.type in ['IN', 'OUT'])
+          && request.resource.data.note is string
+          && (!('latitude' in request.resource.data)
+            || request.resource.data.latitude is number)
+          && (!('longitude' in request.resource.data)
+            || request.resource.data.longitude is number)
+          && (!('locationName' in request.resource.data)
+            || request.resource.data.locationName is string);
+      }
+
+      function validAttendanceCreate() {
+        return signedIn()
+          && isDriver()
+          && request.resource.data.driverUid == request.auth.uid
+          && validAttendanceDocument();
+      }
+
+      function roleCanUpdateAttendance() {
+        return signedIn()
+          && (isAdmin() || (isExpat() && isManagedDriver(resource.data.driverUid)));
+      }
+
+      function validAttendanceUpdate() {
+        return roleCanUpdateAttendance()
+          && validAttendanceDocument()
+          && request.resource.data.driverUid == resource.data.driverUid
+          && request.resource.data.timestampMillis == resource.data.timestampMillis
+          && request.resource.data.type == resource.data.type
+          // affectedKeys(), bukan changedKeys(): pertahanan berlapis terhadap
+          // allowlist drift (pola kegagalan managerUid, L200-205). Saat ini tidak
+          // ada celah add-field; tidak ada perubahan perilaku untuk key in-schema.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+               ['note', 'latitude', 'longitude', 'locationName']
+             );
+      }
+
+      allow create: if validAttendanceCreate();
+
+      // Admin boleh koreksi semua. Expat hanya boleh koreksi attendance driver yang dia manage.
+      // Driver tidak boleh update/delete attendance (create-only).
+      allow update: if validAttendanceUpdate();
+      allow delete: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(resource.data.driverUid)));
+    }
+
+    // =========================
+    // attendance_daily/{uid_epochDay}
+    // ringkasan presensi harian
+    // =========================
+    match /attendance_daily/{doc} {
+      function isDriverDailyDocId() {
+        return isUidEpochDocId(doc, request.auth.uid);
+      }
+
+      // Admin read semua.
+      // Expat read hanya driver yang dia manage.
+      // Driver read milik sendiri.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (resource != null && isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && (
+             (resource != null && resource.data.driverUid == request.auth.uid)
+             || (resource == null && isDriverDailyDocId())
+           ))
+      );
+
+      function isCanonicalDailyDocId() {
+        return request.resource.data.epochDay is int
+          // Enforce `{uid}_{epochDay}` docId.
+          && isCanonicalUidEpochDocId(doc, request.auth.uid, request.resource.data.epochDay);
+      }
+
+      function validAttendanceDailyWrite() {
+        return signedIn()
+          && isDriver()
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               ['driverUid','epochDay','clockInMillis','clockOutMillis','updatedAtMillis']
+             )
+          && request.resource.data.driverUid == request.auth.uid
+          && request.resource.data.epochDay is int
+          && request.resource.data.updatedAtMillis is int
+          && (!('clockInMillis' in request.resource.data)
+            || request.resource.data.clockInMillis is int)
+          && (!('clockOutMillis' in request.resource.data)
+            || request.resource.data.clockOutMillis is int)
+          && isCanonicalDailyDocId();
+      }
+
+      allow create, update: if validAttendanceDailyWrite();
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // workdays/{doc}  format: {driverUid}_{dateEpochDay}
+    // rekap harian + overtime + approval
+    // =========================
+    match /workdays/{doc} {
+      // Admin read semua.
+      // Expat read hanya driver yang dia manage (lihat driverUid di payload).
+      // Driver read milik sendiri.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && resource.data.driverUid == request.auth.uid)
+      );
+
+      function validWorkdayWrite() {
+        return signedIn()
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'driverUid',
+                 'driverName',
+                 'dateEpochDay',
+                 'clockInMillis',
+                 'clockOutMillis',
+                 'totalMinutes',
+                 'overtimeMinutes',
+                 'hasChecklist',
+                 'checklistSubmittedAt',
+                 'hasSafetyDeclaration',
+                 'safetySubmittedAt',
+                 'approvedByExpat',
+                 'approverUid',
+                 'approverName',
+                 'status',
+                 'approvedByUid',
+                 'approvedAtMillis',
+                 'approvalNote',
+                 'rejectedByUid',
+                 'rejectedAtMillis',
+                 'rejectReason',
+                 'rejectionNote',
+                 'adjustedAt',
+                 'adjustedBy',
+                 'adjustedReason',
+                 'overrideByUid',
+                 'overrideAtMillis',
+                 'overrideReason',
+                 'overrideFromStatus',
+                 'decisionTrail',
+                 'plannedStartMillis',
+                 'plannedEndMillis',
+                 'planSource',
+                 'deviationFlags',
+                 'reviewHold',
+                 'createdAt',
+                 'updatedAt'
+               ]
+             )
+          && request.resource.data.driverUid is string
+          && (!('driverName' in request.resource.data)
+            || request.resource.data.driverName is string)
+          && request.resource.data.dateEpochDay is int
+          && request.resource.data.totalMinutes is int
+          && (!('plannedStartMillis' in request.resource.data)
+            || request.resource.data.plannedStartMillis is int)
+          && (!('plannedEndMillis' in request.resource.data)
+            || request.resource.data.plannedEndMillis is int)
+          && (
+            !('plannedStartMillis' in request.resource.data)
+            || !('plannedEndMillis' in request.resource.data)
+            || request.resource.data.plannedEndMillis > request.resource.data.plannedStartMillis
+          )
+          && (!('planSource' in request.resource.data)
+            || (
+              request.resource.data.planSource is string
+              && request.resource.data.planSource in ['default','explicit','adhoc','weekend','manual_admin']
+            ))
+          && (!('deviationFlags' in request.resource.data)
+            || (
+              request.resource.data.deviationFlags is list
+              && request.resource.data.deviationFlags.size() <= 4
+              && request.resource.data.deviationFlags.hasOnly([
+                'early_unplanned',
+                'late_unplanned',
+                'weekend_unplanned',
+                'excessive_ot'
+              ])
+            ))
+          && (!('reviewHold' in request.resource.data)
+            || request.resource.data.reviewHold is bool)
+          && validStatusWrite()
+          && validRejectReasonWrite();
+      }
+
+      /**
+       * Tipe keempat field `override*` — dipisah dari [validWorkdayWrite] DENGAN SENGAJA.
+       *
+       * Pemanggilnya melewati fungsi ini saat `hasValidAdminOverrideAudit` akan berjalan,
+       * karena validator itu memeriksa keempat field yang SAMA dengan syarat yang lebih
+       * ketat (bukan cuma tipe: `overrideByUid == auth.uid`, `overrideReason` tidak boleh
+       * kosong, `overrideFromStatus` harus sama dengan status sebelumnya). Menjalankan
+       * keduanya berarti membayar dua kali untuk pemeriksaan yang sama pada satu-satunya
+       * jalur write yang paling dekat dengan plafon 1000 ekspresi Firestore.
+       *
+       * Create tidak memanggilnya karena `workdayCreateHasNoDecisionAuditOverrideFields`
+       * menolak keempat field itu sepenuhnya di sana.
+       */
+      function overrideFieldTypesValid() {
+        return (!('overrideByUid' in request.resource.data)
+            || request.resource.data.overrideByUid is string
+            || request.resource.data.overrideByUid == null)
+          && (!('overrideAtMillis' in request.resource.data)
+            || request.resource.data.overrideAtMillis is int
+            || request.resource.data.overrideAtMillis == null)
+          && (!('overrideReason' in request.resource.data)
+            || request.resource.data.overrideReason == null
+            || (
+              request.resource.data.overrideReason is string
+              && request.resource.data.overrideReason.size() <= 500
+            ))
+          && (!('overrideFromStatus' in request.resource.data)
+            || request.resource.data.overrideFromStatus == null
+            || (
+              request.resource.data.overrideFromStatus is string
+              && request.resource.data.overrideFromStatus in ['approved','rejected']
+            ));
+      }
+
+      function validStatusWrite() {
+        return !('status' in request.resource.data)
+          || (
+            (
+              request.resource.data.status is string
+              && request.resource.data.status in ['pending','approved','rejected']
+            )
+            || (
+              resource != null
+              && ('status' in resource.data)
+              && request.resource.data.status == resource.data.status
+            )
+          );
+      }
+
+      function rejectReasonValue(data) {
+        return ('rejectReason' in data) ? data.rejectReason : null;
+      }
+
+      function validRejectReasonWrite() {
+        return !('rejectReason' in request.resource.data)
+          || (
+            (resource != null && rejectReasonValue(request.resource.data) == rejectReasonValue(resource.data))
+            || request.resource.data.rejectReason == null
+            || (
+              request.resource.data.rejectReason is string
+              && request.resource.data.rejectReason.size() <= 500
+            )
+          );
+      }
+
+      function isCanonicalWorkdayDocId() {
+        return request.resource.data.driverUid is string
+          && request.resource.data.dateEpochDay is int
+          && isCanonicalUidEpochDocId(doc, request.resource.data.driverUid, request.resource.data.dateEpochDay);
+      }
+
+      function workdayCreateStartsPending() {
+        return !('status' in request.resource.data)
+          || request.resource.data.status == 'pending';
+      }
+
+      function workdayCreateHasNoDecisionAuditOverrideFields() {
+        return !('approvedByExpat' in request.resource.data)
+          && !('approverUid' in request.resource.data)
+          && !('approverName' in request.resource.data)
+          && !('approvedByUid' in request.resource.data)
+          && !('approvedAtMillis' in request.resource.data)
+          && !('approvalNote' in request.resource.data)
+          && !('rejectedByUid' in request.resource.data)
+          && !('rejectedAtMillis' in request.resource.data)
+          && !('rejectReason' in request.resource.data)
+          && !('rejectionNote' in request.resource.data)
+          && !('adjustedAt' in request.resource.data)
+          && !('adjustedBy' in request.resource.data)
+          && !('adjustedReason' in request.resource.data)
+          && !('overrideByUid' in request.resource.data)
+          && !('overrideAtMillis' in request.resource.data)
+          && !('overrideReason' in request.resource.data)
+          && !('overrideFromStatus' in request.resource.data)
+          && !('decisionTrail' in request.resource.data);
+      }
+
+      function decisionStatusFromData(data) {
+        return (
+          ('status' in data && data.status is string && data.status in ['approved','rejected'])
+            ? data.status
+            : (
+              ('rejectedByUid' in data && data.rejectedByUid is string && data.rejectedByUid.size() > 0)
+                ? 'rejected'
+                : (
+                  ('approvedByUid' in data && data.approvedByUid is string && data.approvedByUid.size() > 0)
+                    ? 'approved'
+                    : 'pending'
+                )
+            )
+        );
+      }
+
+      function expatPendingTransitionValid(previousStatus, nextStatus) {
+        return previousStatus == 'pending'
+          && nextStatus in ['pending','approved','rejected']
+          && (
+            nextStatus != 'approved'
+            || (
+              ('approvedByUid' in request.resource.data)
+              && request.resource.data.approvedByUid == request.auth.uid
+            )
+          )
+          && (
+            nextStatus != 'rejected'
+            || (
+              ('rejectedByUid' in request.resource.data)
+              && request.resource.data.rejectedByUid == request.auth.uid
+              && ('rejectReason' in request.resource.data)
+              && request.resource.data.rejectReason is string
+              && request.resource.data.rejectReason.size() > 0
+              && request.resource.data.rejectReason.size() <= 500
+            )
+          );
+      }
+
+      function isFinalizedStatus(status) {
+        return status == 'approved' || status == 'rejected';
+      }
+
+      function requiresAdminOverrideAudit(previousStatus, nextStatus) {
+        let statusChanged = previousStatus != nextStatus;
+        let rejectReasonChangedOnRejected =
+          previousStatus == 'rejected'
+          && nextStatus == 'rejected'
+          && rejectReasonValue(request.resource.data) != rejectReasonValue(resource.data);
+        return isFinalizedStatus(previousStatus)
+          && (statusChanged || rejectReasonChangedOnRejected);
+      }
+
+      function hasValidAdminOverrideAudit(previousStatus) {
+        return ('overrideByUid' in request.resource.data)
+          && request.resource.data.overrideByUid is string
+          && request.resource.data.overrideByUid == request.auth.uid
+          && ('overrideAtMillis' in request.resource.data)
+          && request.resource.data.overrideAtMillis is int
+          && ('overrideReason' in request.resource.data)
+          && request.resource.data.overrideReason is string
+          && request.resource.data.overrideReason.size() > 0
+          && request.resource.data.overrideReason.size() <= 500
+          && ('overrideFromStatus' in request.resource.data)
+          && request.resource.data.overrideFromStatus is string
+          && request.resource.data.overrideFromStatus in ['approved','rejected']
+          && request.resource.data.overrideFromStatus == previousStatus;
+      }
+
+      // `affectedKeys()`, BUKAN `changedKeys()` — dan itu perbaikan celah, bukan gaya.
+      //
+      // `MapDiff.changedKeys()` hanya melaporkan key yang ADA DI KEDUA map dengan nilai
+      // berbeda. Key yang baru DITAMBAHKAN masuk `addedKeys()`, jadi versi sebelumnya
+      // membiarkan penambahan pertama lewat tanpa diperiksa sama sekali — dan penambahan
+      // pertama adalah keadaan normal setiap field audit. Dibuktikan di emulator terhadap
+      // rules yang sedang berlaku (`firestore.workdays.rules.test.js`, tiga test yang
+      // menyebut "changedKeys"): seorang admin bisa menulis
+      // `approvedByUid: <uid expat>` pada workday pending dan mengarang persetujuan
+      // supervisor atas nama orang lain. `affectedKeys()` = added + removed + changed,
+      // sehingga penambahan ikut diperiksa.
+      //
+      // Cabang `!(fieldName in request.resource.data)` menangani PENGHAPUSAN: `affectedKeys()`
+      // memuat key yang dihapus, dan mengakses key yang tidak ada pada map akan error —
+      // bukan `null`. `WorkdayGenerationRepository` benar-benar menghapus field aktor
+      // (`FieldValue.delete()`) saat approval direset, jadi cabang ini bukan hipotesis.
+      function actorFieldMatchesAuthUid(affectedKeys, fieldName) {
+        return !(fieldName in affectedKeys)
+          || !(fieldName in request.resource.data)
+          || request.resource.data[fieldName] == null
+          || (
+            request.resource.data[fieldName] is string
+            && request.resource.data[fieldName] == request.auth.uid
+          );
+      }
+
+      function actorAuditFieldsMatchAuthUid(affectedKeys) {
+        return actorFieldMatchesAuthUid(affectedKeys, 'approverUid')
+          && actorFieldMatchesAuthUid(affectedKeys, 'approvedByUid')
+          && actorFieldMatchesAuthUid(affectedKeys, 'rejectedByUid')
+          && actorFieldMatchesAuthUid(affectedKeys, 'adjustedBy')
+          && actorFieldMatchesAuthUid(affectedKeys, 'overrideByUid');
+      }
+
+      // ─── Jejak keputusan dua langkah (Blok 4.2) ──────────────────────────
+      //
+      // ```
+      // decisionTrail: {
+      //   supervisor: { status, byUid, atMillis },          langkah 1
+      //   admin:      { status, byUid, atMillis, note? }    langkah 2
+      // }
+      // ```
+      //
+      // ## Kenapa satu field map, bukan tujuh field datar
+      // Bentuk pertamanya tujuh field datar meniru `override*`, dan itu **tidak bisa
+      // dievaluasi**. Firestore membatasi satu evaluasi rules pada 1000 ekspresi, aturan
+      // update `workdays` sudah dekat plafon itu, dan `hasOnlyAllowed` sendiri memakan
+      // porsi besar yang nyaris tidak bergantung pada panjang daftarnya (diukur: mem-bypass
+      // `hasOnly` membebaskan cukup ruang untuk write terberat, sementara memendekkan
+      // daftarnya tiga key tidak berpengaruh). Dengan tujuh field datar, write override
+      // terberat gagal dengan `Unable to evaluate the expression as the maximum of 1000
+      // expressions to evaluate has been reached` — yang muncul sebagai PERMISSION_DENIED
+      // biasa, bukan error rules, jadi mudah salah dibaca sebagai bug logika.
+      //
+      // Satu map menukar tujuh entri `hasOnly` dengan satu, dan menukar tiga pemeriksaan
+      // kekekalan langkah 1 dengan satu perbandingan map. Biaya rinciannya hanya dibayar
+      // saat `decisionTrail` benar-benar disentuh.
+      //
+      // Kalau menambah pemeriksaan ke jalur update ini: ukur ulang, jangan kira-kira.
+      //
+      // ## Kenapa langkah 1 butuh slot sendiri padahal sudah ada `approvedByUid`
+      // `adminOverrideDecision` MENIMPA `approvedByUid` dengan uid admin. Setelah satu
+      // override, dokumen tidak lagi menyimpan siapa supervisor yang meninjau — jejaknya
+      // menyusut jadi satu langkah, persis kebalikan dari yang diminta Blok 4.2.
+      function decisionTrailWriteValid(affectedKeys, role, previousStatus, nextStatus) {
+        return !('decisionTrail' in affectedKeys)
+          || (
+            request.resource.data.decisionTrail is map
+            && request.resource.data.decisionTrail.keys().hasOnly(['supervisor', 'admin'])
+            && supervisorStepWriteValid(role, nextStatus)
+            && adminStepWriteValid(role, previousStatus, nextStatus)
+          );
+      }
+
+      function existingDecisionTrail() {
+        return ('decisionTrail' in resource.data && resource.data.decisionTrail is map)
+          ? resource.data.decisionTrail
+          : {};
+      }
+
+      /**
+       * Langkah 1 — peninjauan supervisor. SEKALI TULIS, lalu beku.
+       *
+       * Beku bukan kehati-hatian berlebihan: kalau langkah 1 bisa ditulis ulang, admin yang
+       * tidak setuju bisa menimpanya alih-alih mencatat ketidaksetujuannya di langkah 2 —
+       * dan jejaknya kembali jadi satu langkah dengan pelaku yang keliru. Perbandingan map
+       * `after.supervisor == before.supervisor` menolak perubahan APA PUN di dalamnya,
+       * termasuk write yang menghilangkannya.
+       *
+       * Statusnya wajib sama dengan keputusan yang dicatat write yang sama, jadi
+       * dokumennya memverifikasi dirinya sendiri dan tidak bisa mendrift diam-diam.
+       *
+       * Tidak ada `hasAll(...)` maupun `is map` di sini, dan itu disengaja: klausa di
+       * bawahnya men-dereference `status`/`byUid`/`atMillis`, dan men-dereference key yang
+       * tidak ada di rules adalah evaluation error — yang berarti write-nya DITOLAK. Jadi
+       * langkah yang tidak lengkap sudah tertolak tanpa pemeriksaan tambahan (dibuktikan
+       * test "langkah 1 tanpa waktu ditolak"), sementara pemeriksaan tambahan itu memakan
+       * anggaran ekspresi pada jalur paling sempit di seluruh ruleset ini.
+       */
+      function supervisorStepWriteValid(role, nextStatus) {
+        let after = request.resource.data.decisionTrail;
+        let before = existingDecisionTrail();
+        return ('supervisor' in before)
+          ? ('supervisor' in after && after.supervisor == before.supervisor)
+          : (
+            !('supervisor' in after)
+            || (
+              role != 'admin'
+              && isFinalizedStatus(nextStatus)
+              && after.supervisor.keys().hasOnly(['status', 'byUid', 'atMillis'])
+              && after.supervisor.byUid == request.auth.uid
+              && after.supervisor.atMillis is int
+              && after.supervisor.status == nextStatus
+            )
+          );
+      }
+
+      /**
+       * Langkah 2 — keputusan admin. Hanya boleh DI ATAS langkah 1 yang sudah ada.
+       *
+       * `isFinalizedStatus(previousStatus)` dihitung dari dokumen SEBELUM write, jadi
+       * langkah 2 tidak bisa ditulis bersamaan dengan langkah 1 dalam satu write. Itulah
+       * yang membuat urutan "supervisor meninjau → admin memutuskan" menjadi invarian yang
+       * dipaksakan server, bukan sekadar urutan yang diharapkan UI.
+       *
+       * Sengaja bertumpu pada status dokumen, BUKAN pada `'supervisor' in before`: seluruh
+       * workday yang sudah disetujui expat di production tidak punya `decisionTrail`.
+       * Menuntut slot langkah 1 yang baru akan membuat langkah 2 tidak pernah bisa dicatat
+       * pada dokumen lama — jejak dua langkah yang hanya berlaku untuk data yang belum ada.
+       *
+       * Menimpa langkah 2 yang sudah tercatat hanya boleh kalau yang tercatat itu sudah
+       * **kedaluwarsa** — keputusannya tidak lagi sama dengan keputusan dokumen. Itu
+       * terjadi setelah override admin mengubah statusnya, dan mencatat ulang di situ
+       * justru yang benar. Kalau langkah 2 masih sepakat dengan dokumennya, menimpanya
+       * hanya menukar nama dan waktu tanpa mengubah keputusan apa pun — dan itulah cara
+       * admin kedua menghapus jejak admin pertama.
+       *
+       * Syarat ini sebelumnya `requiresAdminOverrideAudit(...)`, yaitu "hanya boleh dalam
+       * write yang memang override". Itu SALAH dan ditemukan saat menelusuri jalurnya di
+       * emulator: `adminOverrideDecision` tidak menulis jejak sama sekali, jadi langkah 2
+       * tidak akan pernah bisa disegarkan setelah override — jejaknya membeku dalam
+       * keadaan yang membantah statusnya sendiri, dan sisi Kotlin (`evaluateAdminWorkday
+       * Decision`) mengizinkan write yang server tolak. Rules dan UI wajib sepakat.
+       *
+       * Konsekuensi yang perlu disebut terang-terangan: begitu override membuat langkah 2
+       * kedaluwarsa, admin **lain** boleh mencatat ulang, dan uid admin sebelumnya tidak
+       * lagi tersimpan di slot itu. Itu memang bentuknya — slot ini menyimpan keputusan
+       * admin yang BERLAKU SEKARANG, bukan riwayat setiap admin yang pernah menyentuhnya.
+       * Siapa yang melakukan override-nya tetap tercatat di `overrideByUid` /
+       * `overrideAtMillis` / `overrideReason`.
+       */
+      function adminStepWriteValid(role, previousStatus, nextStatus) {
+        let after = request.resource.data.decisionTrail;
+        let before = existingDecisionTrail();
+        return !('admin' in after)
+          ? !('admin' in before)
+          : (
+            role == 'admin'
+            && isFinalizedStatus(previousStatus)
+            && isFinalizedStatus(nextStatus)
+            && after.admin.keys().hasOnly(['status', 'byUid', 'atMillis', 'note'])
+            && after.admin.byUid == request.auth.uid
+            && after.admin.atMillis is int
+            && after.admin.status == nextStatus
+            && (
+              !('note' in after.admin)
+              || (after.admin.note is string && after.admin.note.size() <= 500)
+            )
+            && (!('admin' in before) || before.admin.status != nextStatus)
+          );
+      }
+
+      function expatDriverNameBackfillValid() {
+        return (
+          (
+            ('driverName' in resource.data)
+            && resource.data.driverName is string
+            && !resource.data.driverName.matches('^\\s*$')
+          )
+            ? (
+              // If already non-blank, driverName becomes immutable (cannot change/delete).
+              ('driverName' in request.resource.data)
+              && (request.resource.data.driverName is string)
+              && request.resource.data.driverName == resource.data.driverName
+            )
+            : true
+        );
+      }
+
+      function commonWorkdayUpdateChecks(
+        affectedKeys, role, previousStatus, nextStatus, needsOverrideAudit
+      ) {
+        return validWorkdayWrite()
+          && (needsOverrideAudit || overrideFieldTypesValid())
+          && actorAuditFieldsMatchAuthUid(affectedKeys)
+          && decisionTrailWriteValid(affectedKeys, role, previousStatus, nextStatus)
+          && !('createdAt' in affectedKeys)
+          && request.resource.data.driverUid == resource.data.driverUid;
+      }
+
+      function adminCanUpdateWorkday(affectedKeys, previousStatus, nextStatus) {
+        let needsOverrideAudit = requiresAdminOverrideAudit(previousStatus, nextStatus);
+        return commonWorkdayUpdateChecks(
+            affectedKeys, 'admin', previousStatus, nextStatus, needsOverrideAudit
+          )
+          && (!needsOverrideAudit || hasValidAdminOverrideAudit(previousStatus));
+      }
+
+      function expatCanUpdateWorkday(affectedKeys, previousStatus, nextStatus) {
+        return commonWorkdayUpdateChecks(affectedKeys, 'expat', previousStatus, nextStatus, false)
+          && expatPendingTransitionValid(previousStatus, nextStatus)
+          // Expat: boleh backfill driverName sekali jika sebelumnya kosong/blank.
+          // "Blank" = missing / empty string / whitespace-only.
+          && expatDriverNameBackfillValid();
+      }
+
+      /**
+       * Satu-satunya tempat diff dan kedua status keputusan dihitung.
+       *
+       * Ini bukan kerapian, ini syarat agar aturannya bisa dievaluasi. Firestore membatasi
+       * satu evaluasi rules pada **1000 ekspresi**, dan `decisionStatusFromData` adalah
+       * rantai ternary bersarang yang tidak murah. Versi sebelum Blok 4.2 memanggilnya
+       * ulang di `expatPendingTransitionValid`, `requiresAdminOverrideAudit` (dua kali),
+       * `hasValidAdminOverrideAudit`, dan `isFinalizedDecision` — sekitar sembilan
+       * evaluasi untuk satu write override. Menambah langkah kedua di atas itu membuat
+       * dua test override menabrak plafon, dan pesannya BUKAN error rules melainkan
+       * `Unable to evaluate the expression as the maximum of 1000 expressions to evaluate
+       * has been reached`, yang tampil sebagai penolakan biasa.
+       *
+       * Karena itu: hitung sekali di sini, edarkan sebagai parameter. Jangan kembalikan
+       * pemanggilan `decisionStatusFromData()` ke dalam fungsi-fungsi turunan, dan ukur
+       * ulang kalau menambahkan pemeriksaan baru ke jalur update ini.
+       */
+      function roleCanUpdateWorkday() {
+        let role = roleLower();
+        let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+        let previousStatus = decisionStatusFromData(resource.data);
+        let nextStatus = decisionStatusFromData(request.resource.data);
+        return role == 'admin'
+          ? adminCanUpdateWorkday(affectedKeys, previousStatus, nextStatus)
+          : (
+            role in ['expat', 'expatriate', 'expatriat']
+            && isManagedDriver(resource.data.driverUid)
+            && expatCanUpdateWorkday(affectedKeys, previousStatus, nextStatus)
+          );
+      }
+
+      // Opsi 2 (yang kamu pilih): driver tidak create workdays.
+      // Workdays dibuat/diupdate oleh Expat atau Admin (atau Cloud Functions/Server SDK nantinya).
+      allow create: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(request.resource.data.driverUid)))
+        && validWorkdayWrite()
+        && workdayCreateStartsPending()
+        && workdayCreateHasNoDecisionAuditOverrideFields()
+        && isCanonicalWorkdayDocId();
+
+      // NOTE: Firestore `allow` rules use OR semantics, so every `allow update`
+      // path must include the immutability check. Do not leave any update rule
+      // without the driverUid equality guard.
+      // Extra guard: driverUid tidak boleh berubah saat update
+      allow update: if signedIn() && roleCanUpdateWorkday();
+
+      allow delete: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(resource.data.driverUid)));
+    }
+
+    // =========================
+    // workday_plans/{uid_epochDay}
+    // explicit plan override for a driver workday
+    // =========================
+    match /workday_plans/{doc} {
+
+      function isCanonicalPlanDocId(driverUid) {
+        return request.resource.data.dateEpochDay is int
+          && isCanonicalUidEpochDocId(doc, driverUid, request.resource.data.dateEpochDay);
+      }
+
+      function validPlanWrite() {
+        return signedIn()
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'driverUid',
+                 'dateEpochDay',
+                 'plannedStartMillis',
+                 'plannedEndMillis',
+                 'source',
+                 'createdAt',
+                 'createdByUid',
+                 'note'
+               ]
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.dateEpochDay is int
+          && request.resource.data.plannedStartMillis is int
+          && request.resource.data.plannedEndMillis is int
+          && request.resource.data.plannedEndMillis > request.resource.data.plannedStartMillis
+          && request.resource.data.source is string
+          && request.resource.data.source in ['admin','expat']
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdByUid is string
+          && (!('note' in request.resource.data) || request.resource.data.note is string)
+          && isCanonicalPlanDocId(request.resource.data.driverUid);
+      }
+
+      // Read rules:
+      // - Admin can read all.
+      // - Expat can read plans for managed drivers.
+      // - Driver can read only their own plan docs.
+      //   A non-existent plan doc (`resource == null`) whose canonical
+      //   `{uid}_{epochDay}` id belongs to the requesting driver is readable,
+      //   so the daily "plan for today" lookup returns empty instead of
+      //   PERMISSION_DENIED on the normal no-override path (mirrors the
+      //   `workdays` read rule above).
+      allow read: if signedIn() && (
+        isAdmin()
+        || (resource != null && isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && (
+             (resource != null && resource.data.driverUid == request.auth.uid)
+             || (resource == null && isUidEpochDocId(doc, request.auth.uid))
+           ))
+      );
+
+      // Write rules:
+      // - Only Admin/Expat can create/update/delete plans.
+      // - Expat restricted to managed drivers.
+      allow create: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(request.resource.data.driverUid)))
+        && validPlanWrite()
+        && request.resource.data.createdByUid == request.auth.uid
+        && (
+          (isExpat() && request.resource.data.source == "expat")
+          || (isAdmin() && request.resource.data.source in ["admin","expat"])
+        );
+
+      allow update: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(resource.data.driverUid)))
+        && validPlanWrite()
+        && request.resource.data.driverUid == resource.data.driverUid
+        && request.resource.data.dateEpochDay == resource.data.dateEpochDay
+        && !('createdAt' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('createdByUid' in request.resource.data.diff(resource.data).affectedKeys())
+        && (
+          (isExpat() && request.resource.data.source == "expat")
+          || (isAdmin() && request.resource.data.source in ["admin","expat"])
+        );
+
+      allow delete: if signedIn()
+        && (isAdmin() || (isExpat() && isManagedDriver(resource.data.driverUid)));
+    }
+
+    // =========================
+    // driver_assignments/{uid_epochDay}
+    // daily substitute-expat override for a driver, always a full day.
+    // Falls back to users/{driverUid}.managerUid (permanent pairing, written
+    // by Admin only — see users/{uid} block above) when no override exists
+    // for that day. Resolution itself happens client-side in
+    // ResolveExpatForDriverUseCase, not in these rules.
+    // =========================
+    match /driver_assignments/{doc} {
+
+      function isCanonicalAssignmentDocId(driverUid) {
+        return request.resource.data.epochDay is int
+          && isCanonicalUidEpochDocId(doc, driverUid, request.resource.data.epochDay);
+      }
+
+      function validAssignmentWrite() {
+        return signedIn()
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               ['driverUid','expatUid','assignedBy','reason','epochDay','createdAt']
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.expatUid is string
+          && request.resource.data.expatUid != request.resource.data.driverUid
+          && request.resource.data.assignedBy is string
+          && request.resource.data.assignedBy == request.auth.uid
+          && request.resource.data.reason is string
+          && request.resource.data.reason in ['SICK','LEAVE','OVERTIME_REST','OTHER']
+          && request.resource.data.epochDay is int
+          && request.resource.data.createdAt is int
+          && isCanonicalAssignmentDocId(request.resource.data.driverUid);
+      }
+
+      // Read rules:
+      // - Admin can read all.
+      // - Expat can read overrides where they are the assigned substitute.
+      // - Driver can read their own override docs (needed so
+      //   ResolveExpatForDriverUseCase running as the driver, e.g. on tap-in,
+      //   can see today's substitution instead of silently falling back to
+      //   the permanent managerUid).
+      allow read: if signedIn() && (
+        isAdmin()
+        || (resource != null && isExpat() && resource.data.expatUid == request.auth.uid)
+        || (resource != null && isDriver() && resource.data.driverUid == request.auth.uid)
+      );
+
+      // Write rules: Admin-only. No Expat write branch (unlike workday_plans) —
+      // substitution assignment is an Admin decision per this feature's spec.
+      allow create: if signedIn() && isAdmin() && validAssignmentWrite();
+
+      allow update: if signedIn() && isAdmin() && validAssignmentWrite()
+        && request.resource.data.driverUid == resource.data.driverUid
+        && request.resource.data.epochDay == resource.data.epochDay
+        && !('createdAt' in request.resource.data.diff(resource.data).affectedKeys());
+
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // work_calendars/{year}
+    // company work calendar (1 doc per year)
+    // =========================
+    match /work_calendars/{yearId} {
+      allow get, list: if signedIn()
+        && isYearId(yearId)
+        && (isAdmin() || isExpat() || isDriver());
+
+      function validWorkSpecMap(spec) {
+        return spec is map
+          && spec.keys().hasOnly(['startMin', 'endMin', 'breakMin'])
+          && spec.keys().hasAll(['startMin', 'endMin', 'breakMin'])
+          && spec.startMin is int
+          && spec.endMin is int
+          && spec.breakMin is int
+          && spec.startMin >= 0
+          && spec.endMin <= 1440
+          && spec.startMin < spec.endMin
+          && spec.breakMin >= 0
+          && spec.breakMin < (spec.endMin - spec.startMin);
+      }
+
+      function validDefaultRules(defaultRules) {
+        return defaultRules is map
+          && defaultRules.keys().hasOnly(['mondayToThursday', 'friday', 'weekendDefault'])
+          && defaultRules.keys().hasAll(['mondayToThursday', 'friday', 'weekendDefault'])
+          && validWorkSpecMap(defaultRules.mondayToThursday)
+          && validWorkSpecMap(defaultRules.friday)
+          && defaultRules.weekendDefault is string
+          && defaultRules.weekendDefault == "OFF";
+      }
+
+      function validOverrideNote(item) {
+        return !('note' in item)
+          || item.note == null
+          || (item.note is string && item.note.size() <= 300);
+      }
+
+      function validOverrideWorkSpecByKind(item) {
+        return (item.kind == 'HOLIDAY' && ('workSpec' in item) && item.workSpec == null)
+          || (item.kind == 'WORKDAY_SWAP' && ('workSpec' in item) && item.workSpec == null)
+          || (item.kind == 'CUSTOM' && ('workSpec' in item) && validWorkSpecMap(item.workSpec));
+      }
+
+      function validOverrideItem(item) {
+        return item is map
+          && item.keys().hasOnly(['dateEpochDay', 'kind', 'workSpec', 'note', 'updatedAtMillis'])
+          && item.keys().hasAll(['dateEpochDay', 'kind', 'workSpec', 'updatedAtMillis'])
+          && item.dateEpochDay is int
+          && item.kind is string
+          && item.kind in ['HOLIDAY', 'WORKDAY_SWAP', 'CUSTOM']
+          && item.updatedAtMillis is int
+          && validOverrideNote(item)
+          && validOverrideWorkSpecByKind(item);
+      }
+
+      function validOverrideChunk0(items) {
+        return (items.size() <= 0 || validOverrideItem(items[0]))
+          && (items.size() <= 1 || validOverrideItem(items[1]))
+          && (items.size() <= 2 || validOverrideItem(items[2]))
+          && (items.size() <= 3 || validOverrideItem(items[3]))
+          && (items.size() <= 4 || validOverrideItem(items[4]))
+          && (items.size() <= 5 || validOverrideItem(items[5]))
+          && (items.size() <= 6 || validOverrideItem(items[6]))
+          && (items.size() <= 7 || validOverrideItem(items[7]))
+          && (items.size() <= 8 || validOverrideItem(items[8]))
+          && (items.size() <= 9 || validOverrideItem(items[9]))
+          && (items.size() <= 10 || validOverrideItem(items[10]))
+          && (items.size() <= 11 || validOverrideItem(items[11]))
+          && (items.size() <= 12 || validOverrideItem(items[12]))
+          && (items.size() <= 13 || validOverrideItem(items[13]))
+          && (items.size() <= 14 || validOverrideItem(items[14]))
+          && (items.size() <= 15 || validOverrideItem(items[15]))
+          && (items.size() <= 16 || validOverrideItem(items[16]))
+          && (items.size() <= 17 || validOverrideItem(items[17]))
+          && (items.size() <= 18 || validOverrideItem(items[18]))
+          && (items.size() <= 19 || validOverrideItem(items[19]));
+      }
+
+      function validOverrideChunk1(items) {
+        return (items.size() <= 20 || validOverrideItem(items[20]))
+          && (items.size() <= 21 || validOverrideItem(items[21]))
+          && (items.size() <= 22 || validOverrideItem(items[22]))
+          && (items.size() <= 23 || validOverrideItem(items[23]))
+          && (items.size() <= 24 || validOverrideItem(items[24]))
+          && (items.size() <= 25 || validOverrideItem(items[25]))
+          && (items.size() <= 26 || validOverrideItem(items[26]))
+          && (items.size() <= 27 || validOverrideItem(items[27]))
+          && (items.size() <= 28 || validOverrideItem(items[28]))
+          && (items.size() <= 29 || validOverrideItem(items[29]));
+      }
+
+      function validOverrideList(items) {
+        return items is list
+          && validOverrideChunk0(items)
+          && validOverrideChunk1(items)
+          ;
+      }
+
+      function validWorkCalendarWrite() {
+        return signedIn()
+          && isAdmin()
+          && isYearId(yearId)
+          && yearMatchesDocId(yearId)
+          && request.resource.data.keys().hasOnly(
+               ['year', 'updatedAtMillis', 'timeZoneId', 'defaultRules', 'overrides']
+             )
+          && request.resource.data.keys().hasAll(
+               ['year', 'updatedAtMillis', 'timeZoneId', 'defaultRules', 'overrides']
+             )
+          && request.resource.data.updatedAtMillis is int
+          && request.resource.data.timeZoneId is string
+          && request.resource.data.timeZoneId == "Asia/Jakarta"
+          && validDefaultRules(request.resource.data.defaultRules)
+          && request.resource.data.overrides is list
+          && request.resource.data.overrides.size() <= 30
+          && validOverrideList(request.resource.data.overrides);
+      }
+
+      allow create, update: if validWorkCalendarWrite();
+      allow delete: if signedIn() && isAdmin() && isYearId(yearId);
+    }
+
+    // =========================
+    // Future collections (nanti)
+    // safety_declarations/{autoId}, vehicle_checklists/{autoId}
+    // =========================
+    match /safety_declarations/{doc} {
+      // Admin read semua.
+      // Expat read hanya driver yang dia manage.
+      // Driver read milik sendiri.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (resource != null && isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && (
+          resource == null || resource.data.driverUid == request.auth.uid
+        ))
+      );
+
+      function isCanonicalSafetyDocId() {
+        return request.resource.data.driverUid is string
+          && request.resource.data.dateEpochDay is int
+          && isCanonicalUidEpochDocId(
+               doc,
+               request.resource.data.driverUid,
+               request.resource.data.dateEpochDay
+             );
+      }
+
+      function validSafetyDocument() {
+        return request.resource.data.keys().hasAll(
+                 [
+                   'driverUid',
+                   'driverEmail',
+                   'dateEpochDay',
+                   'submittedAt',
+                   'fitToWork',
+                   'noAlcoholOrDrugs',
+                   'noSevereStress',
+                   'willFollowSpeedLimit',
+                   'willFollowRestBreaks',
+                   'willNotUsePhoneWhileDriving',
+                   'willWearSeatbelt',
+                   'confirmed',
+                   'createdAt',
+                   'updatedAt'
+                 ]
+               )
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'driverUid',
+                 'driverEmail',
+                 'dateEpochDay',
+                 'submittedAt',
+                 'fitToWork',
+                 'noAlcoholOrDrugs',
+                 'noSevereStress',
+                 'willFollowSpeedLimit',
+                 'willFollowRestBreaks',
+                 'willNotUsePhoneWhileDriving',
+                 'willWearSeatbelt',
+                 'confirmed',
+                 'createdAt',
+                 'updatedAt',
+                 'sleepHours',
+                 'hazardAwareness',
+                 'weatherCondition',
+                 'routeRiskNote',
+                 'incidentReport',
+                 'driverName'
+               ]
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.driverEmail is string
+          && request.resource.data.dateEpochDay is int
+          && request.resource.data.submittedAt is int
+          && request.resource.data.fitToWork is bool
+          && request.resource.data.noAlcoholOrDrugs is bool
+          && request.resource.data.noSevereStress is bool
+          && request.resource.data.willFollowSpeedLimit is bool
+          && request.resource.data.willFollowRestBreaks is bool
+          && request.resource.data.willNotUsePhoneWhileDriving is bool
+          && request.resource.data.willWearSeatbelt is bool
+          && request.resource.data.confirmed is bool
+          && request.resource.data.createdAt is int
+          && request.resource.data.updatedAt is int
+          && (!('sleepHours' in request.resource.data)
+            || request.resource.data.sleepHours is int)
+          && (!('hazardAwareness' in request.resource.data)
+            || request.resource.data.hazardAwareness is string)
+          && (!('weatherCondition' in request.resource.data)
+            || request.resource.data.weatherCondition is string)
+          && (!('routeRiskNote' in request.resource.data)
+            || request.resource.data.routeRiskNote is string)
+          && (!('incidentReport' in request.resource.data)
+            || request.resource.data.incidentReport is string)
+          && (!('driverName' in request.resource.data)
+            || request.resource.data.driverName is string);
+      }
+
+      function validSafetyCreate() {
+        return validSafetyDocument()
+          && isCanonicalSafetyDocId()
+          && (
+            isAdmin()
+            || (isDriver() && request.resource.data.driverUid == request.auth.uid)
+          );
+      }
+
+      function validSafetyUpdate() {
+        return signedIn()
+          && isAdmin()
+          && validSafetyDocument()
+          && isCanonicalSafetyDocId()
+          && request.resource.data.driverUid == resource.data.driverUid
+          && request.resource.data.driverEmail == resource.data.driverEmail
+          && request.resource.data.dateEpochDay == resource.data.dateEpochDay
+          && request.resource.data.submittedAt == resource.data.submittedAt
+          && request.resource.data.createdAt == resource.data.createdAt
+          // affectedKeys(), bukan changedKeys(): pertahanan berlapis terhadap
+          // allowlist drift (pola kegagalan managerUid, L200-205). Saat ini tidak
+          // ada celah add-field; tidak ada perubahan perilaku untuk key in-schema.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+               [
+                 'fitToWork',
+                 'sleepHours',
+                 'noAlcoholOrDrugs',
+                 'noSevereStress',
+                 'willFollowSpeedLimit',
+                 'willFollowRestBreaks',
+                 'willNotUsePhoneWhileDriving',
+                 'willWearSeatbelt',
+                 'hazardAwareness',
+                 'weatherCondition',
+                 'routeRiskNote',
+                 'incidentReport',
+                 'confirmed',
+                 'driverName',
+                 'updatedAt'
+               ]
+             );
+      }
+
+      // Driver hanya boleh CREATE sekali per hari via docId canonical: `{uid}_{dateEpochDay}`.
+      // Update oleh driver ditolak untuk mencegah overwrite "create kedua".
+      allow create: if signedIn() && validSafetyCreate();
+
+      allow update: if validSafetyUpdate();
+
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    match /vehicle_checklists/{doc} {
+      // Admin read semua.
+      // Expat read hanya driver yang dia manage.
+      // Driver read milik sendiri.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (resource != null && isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && (
+          resource == null || resource.data.driverUid == request.auth.uid
+        ))
+      );
+
+      function isCanonicalChecklistDocId() {
+        return request.resource.data.driverUid is string
+          && request.resource.data.dateEpochDay is int
+          && isCanonicalUidEpochDocId(
+               doc,
+               request.resource.data.driverUid,
+               request.resource.data.dateEpochDay
+             );
+      }
+
+      function validChecklistDocument() {
+        return request.resource.data.keys().hasAll(
+                 [
+                   'driverUid',
+                   'driverEmail',
+                   'dateEpochDay',
+                   'submittedAt',
+                   'createdAt',
+                   'updatedAt',
+                   'hasIssue'
+                 ]
+               )
+          && hasOnlyAllowed(
+               request.resource.data.keys(),
+               [
+                 'driverUid',
+                 'driverEmail',
+                 'dateEpochDay',
+                 'submittedAt',
+                 'createdAt',
+                 'updatedAt',
+                 'hasIssue',
+                 'vehicleId',
+                 'odometerKm',
+                 'fuelLevel',
+                 'tiresFrontLeftOk',
+                 'tiresFrontRightOk',
+                 'tiresRearLeftOk',
+                 'tiresRearRightOk',
+                 'tirePressureNote',
+                 'brakesOk',
+                 'lightsOk',
+                 'turnSignalBrakeLightsOk',
+                 'hornOk',
+                 'wipersOk',
+                 'mirrorsOk',
+                 'seatbeltOk',
+                 'engineOilOk',
+                 'coolantOk',
+                 'batteryOk',
+                 'washerFluidOk',
+                 'cleanlinessOk',
+                 'documentsOk',
+                 'fireExtinguisherOk',
+                 'firstAidOk',
+                 'warningTriangleOk',
+                 'notes',
+                 'driverName',
+                 // Blok 4.1 — tindak lanjut temuan (C3). Ditambahkan ke dokumen yang
+                 // sama, bukan koleksi baru: satu temuan, satu dokumen, satu kebenaran.
+                 'followUpStatus',
+                 'followUpOwnerUid',
+                 'followUpNote',
+                 'followUpUpdatedAtMillis',
+                 'followUpUpdatedByUid'
+               ]
+             )
+          && request.resource.data.driverUid is string
+          && request.resource.data.driverEmail is string
+          && request.resource.data.dateEpochDay is int
+          && request.resource.data.submittedAt is int
+          && request.resource.data.createdAt is int
+          && request.resource.data.updatedAt is int
+          && request.resource.data.hasIssue is bool
+          && (!('vehicleId' in request.resource.data)
+            || request.resource.data.vehicleId is string)
+          && (!('odometerKm' in request.resource.data)
+            || request.resource.data.odometerKm is int)
+          && (!('fuelLevel' in request.resource.data)
+            || request.resource.data.fuelLevel is string)
+          && (!('tiresFrontLeftOk' in request.resource.data)
+            || request.resource.data.tiresFrontLeftOk is bool)
+          && (!('tiresFrontRightOk' in request.resource.data)
+            || request.resource.data.tiresFrontRightOk is bool)
+          && (!('tiresRearLeftOk' in request.resource.data)
+            || request.resource.data.tiresRearLeftOk is bool)
+          && (!('tiresRearRightOk' in request.resource.data)
+            || request.resource.data.tiresRearRightOk is bool)
+          && (!('tirePressureNote' in request.resource.data)
+            || request.resource.data.tirePressureNote is string)
+          && (!('brakesOk' in request.resource.data)
+            || request.resource.data.brakesOk is bool)
+          && (!('lightsOk' in request.resource.data)
+            || request.resource.data.lightsOk is bool)
+          && (!('turnSignalBrakeLightsOk' in request.resource.data)
+            || request.resource.data.turnSignalBrakeLightsOk is bool)
+          && (!('hornOk' in request.resource.data)
+            || request.resource.data.hornOk is bool)
+          && (!('wipersOk' in request.resource.data)
+            || request.resource.data.wipersOk is bool)
+          && (!('mirrorsOk' in request.resource.data)
+            || request.resource.data.mirrorsOk is bool)
+          && (!('seatbeltOk' in request.resource.data)
+            || request.resource.data.seatbeltOk is bool)
+          && (!('engineOilOk' in request.resource.data)
+            || request.resource.data.engineOilOk is bool)
+          && (!('coolantOk' in request.resource.data)
+            || request.resource.data.coolantOk is bool)
+          && (!('batteryOk' in request.resource.data)
+            || request.resource.data.batteryOk is bool)
+          && (!('washerFluidOk' in request.resource.data)
+            || request.resource.data.washerFluidOk is bool)
+          && (!('cleanlinessOk' in request.resource.data)
+            || request.resource.data.cleanlinessOk is bool)
+          && (!('documentsOk' in request.resource.data)
+            || request.resource.data.documentsOk is bool)
+          && (!('fireExtinguisherOk' in request.resource.data)
+            || request.resource.data.fireExtinguisherOk is bool)
+          && (!('firstAidOk' in request.resource.data)
+            || request.resource.data.firstAidOk is bool)
+          && (!('warningTriangleOk' in request.resource.data)
+            || request.resource.data.warningTriangleOk is bool)
+          && (!('notes' in request.resource.data)
+            || request.resource.data.notes is string)
+          && (!('driverName' in request.resource.data)
+            || request.resource.data.driverName is string)
+          && (!('followUpStatus' in request.resource.data)
+            || request.resource.data.followUpStatus in ['new', 'reviewed', 'closed'])
+          && (!('followUpOwnerUid' in request.resource.data)
+            || request.resource.data.followUpOwnerUid is string)
+          && (!('followUpNote' in request.resource.data)
+            || request.resource.data.followUpNote is string)
+          && (!('followUpUpdatedAtMillis' in request.resource.data)
+            || request.resource.data.followUpUpdatedAtMillis is int)
+          && (!('followUpUpdatedByUid' in request.resource.data)
+            || request.resource.data.followUpUpdatedByUid is string);
+      }
+
+      // Status tindak lanjut yang EFEKTIF. Field yang belum ada berarti 'new' — itu
+      // keadaan seluruh dokumen yang sudah ada di production sebelum Blok 4.1.
+      function followUpStatusOf(data) {
+        return 'followUpStatus' in data ? data.followUpStatus : 'new';
+      }
+
+      // Catatan yang EFEKTIF, '' bila belum ada.
+      function followUpNoteOf(data) {
+        return 'followUpNote' in data ? data.followUpNote : '';
+      }
+
+      // Mesin status tindak lanjut, cermin `evaluateChecklistFollowUp` di commonMain.
+      // Dua tempat memang, dan itu disengaja: yang di Kotlin bisa diuji di mesin dev,
+      // yang di sini berlaku juga untuk tulisan dari Console.
+      function validFollowUpTransition() {
+        let before = followUpStatusOf(resource.data);
+        let after = followUpStatusOf(request.resource.data);
+        // Catatan BARU, bukan sekadar catatan yang ADA. Update Firestore bersifat
+        // merge, jadi `request.resource.data` masih membawa catatan lama — tanpa
+        // pembandingan ini, membuka ulang temuan yang tertutup akan lolos dengan
+        // memakai catatan penutupnya sendiri sebagai alasan pembukaan. Itu persis
+        // koreksi tanpa jejak yang aturan ini ada untuk mencegah.
+        let noteBefore = followUpNoteOf(resource.data);
+        let noteAfter = followUpNoteOf(request.resource.data);
+        let noteOk = noteAfter is string
+          && noteAfter.size() > 0
+          && noteAfter != noteBefore;
+        let ownerOk = 'followUpOwnerUid' in request.resource.data
+          && request.resource.data.followUpOwnerUid is string
+          && request.resource.data.followUpOwnerUid.size() > 0;
+        return after in ['new', 'reviewed', 'closed']
+          // Mengembalikan temuan ke "belum tersentuh" menghapus kenyataan bahwa ia
+          // pernah ditangani.
+          && !(after == 'new' && before != 'new')
+          // Menutup temuan yang belum pernah ditinjau = penyelesaian di atas kertas.
+          && !(after == 'closed' && before == 'new')
+          // "Ditinjau" tanpa penanggung jawab tidak bergerak ke mana pun.
+          && (after != 'reviewed' || ownerOk)
+          // Catatan dituntut saat MASUK `closed` (apa yang dikerjakan) maupun saat
+          // KELUAR darinya (kenapa dibuka lagi). Koreksi tanpa jejak sama buruknya
+          // dengan penutupan kosong.
+          && (after == before
+            || !(after == 'closed' || before == 'closed')
+            || noteOk);
+      }
+
+      function validChecklistCreate() {
+        return validChecklistDocument()
+          && isCanonicalChecklistDocId()
+          // Field tindak lanjut TIDAK BOLEH ada saat create. Tanpa penjaga ini, seorang
+          // driver bisa mengirim `followUpStatus: 'closed'` bersama checklist-nya sendiri
+          // dan menutup temuannya sendiri sebelum ada yang melihatnya.
+          && !request.resource.data.keys().hasAny(
+               [
+                 'followUpStatus',
+                 'followUpOwnerUid',
+                 'followUpNote',
+                 'followUpUpdatedAtMillis',
+                 'followUpUpdatedByUid'
+               ]
+             )
+          && (
+            isAdmin()
+            || (isDriver() && request.resource.data.driverUid == request.auth.uid)
+          );
+      }
+
+      function validChecklistUpdate() {
+        return signedIn()
+          && isAdmin()
+          && validChecklistDocument()
+          && isCanonicalChecklistDocId()
+          && request.resource.data.driverUid == resource.data.driverUid
+          && request.resource.data.driverEmail == resource.data.driverEmail
+          && request.resource.data.dateEpochDay == resource.data.dateEpochDay
+          && request.resource.data.submittedAt == resource.data.submittedAt
+          && request.resource.data.createdAt == resource.data.createdAt
+          // affectedKeys(), bukan changedKeys(): pertahanan berlapis terhadap
+          // allowlist drift (pola kegagalan managerUid, L200-205). Saat ini tidak
+          // ada celah add-field; tidak ada perubahan perilaku untuk key in-schema.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+               [
+                 'vehicleId',
+                 'odometerKm',
+                 'fuelLevel',
+                 'tiresFrontLeftOk',
+                 'tiresFrontRightOk',
+                 'tiresRearLeftOk',
+                 'tiresRearRightOk',
+                 'tirePressureNote',
+                 'brakesOk',
+                 'lightsOk',
+                 'turnSignalBrakeLightsOk',
+                 'hornOk',
+                 'wipersOk',
+                 'mirrorsOk',
+                 'seatbeltOk',
+                 'engineOilOk',
+                 'coolantOk',
+                 'batteryOk',
+                 'washerFluidOk',
+                 'cleanlinessOk',
+                 'documentsOk',
+                 'fireExtinguisherOk',
+                 'firstAidOk',
+                 'warningTriangleOk',
+                 'notes',
+                 'driverName',
+                 'hasIssue',
+                 'updatedAt',
+                 'followUpStatus',
+                 'followUpOwnerUid',
+                 'followUpNote',
+                 'followUpUpdatedAtMillis',
+                 'followUpUpdatedByUid'
+               ]
+             )
+          && validFollowUpTransition();
+      }
+
+      // Driver hanya boleh CREATE sekali per hari via docId canonical: `{uid}_{dateEpochDay}`.
+      // Update oleh driver ditolak untuk mencegah overwrite "create kedua".
+      allow create: if signedIn() && validChecklistCreate();
+
+      allow update: if validChecklistUpdate();
+
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // app_config/{doc}   (R3 — konfigurasi keselamatan global)
+    // =========================
+    // Dibaca siapa pun yang login (klien driver perlu batas kecepatan untuk deteksi
+    // sisi-klien), ditulis HANYA admin. Belum ada UI Admin untuk ini — v1 diisi manual
+    // lewat console; lihat AGENTS/DRIVEMATE_STATE.md.
+    match /app_config/{doc} {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && isAdmin()
+        && hasOnlyAllowed(
+             request.resource.data.keys(),
+             ['speedLimitKph', 'enabled', 'updatedAtMillis']
+           )
+        && request.resource.data.speedLimitKph is number
+        && request.resource.data.speedLimitKph > 0
+        && request.resource.data.enabled is bool;
+
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // speed_violations/{doc}   (R3 — event pelanggaran batas kecepatan)
+    // =========================
+    // Append-only, pola sama seperti `attendances`: sekali tulis, tidak pernah
+    // di-update maupun dihapus oleh klien. Ini catatan keselamatan — kalau driver
+    // bisa meng-update atau menghapusnya, nilainya sebagai bukti hilang.
+    match /speed_violations/{doc} {
+      // Admin baca semua; expat hanya driver yang dia manage; driver hanya miliknya.
+      allow read: if signedIn() && (
+        isAdmin()
+        || (isExpat() && isManagedDriver(resource.data.driverUid))
+        || (isDriver() && resource.data.driverUid == request.auth.uid)
+      );
+
+      // HANYA driver yang bersangkutan yang boleh membuat event untuk dirinya sendiri.
+      // Tanpa pengikatan driverUid == request.auth.uid, satu driver bisa mengarang
+      // pelanggaran atas nama driver lain dan memicu notifikasi ke expat+admin mereka.
+      allow create: if signedIn()
+        && isDriver()
+        && request.resource.data.driverUid == request.auth.uid
+        && request.resource.data.keys().hasAll(
+             ['driverUid', 'speedKph', 'speedLimitKph', 'occurredAtMillis']
+           )
+        && hasOnlyAllowed(
+             request.resource.data.keys(),
+             ['driverUid', 'speedKph', 'speedLimitKph', 'occurredAtMillis', 'latitude', 'longitude']
+           )
+        && request.resource.data.speedKph is number
+        && request.resource.data.speedLimitKph is number
+        && request.resource.data.occurredAtMillis is int
+        && (!('latitude' in request.resource.data) || request.resource.data.latitude is number)
+        && (!('longitude' in request.resource.data) || request.resource.data.longitude is number);
+
+      // Append-only: klien tidak pernah boleh mengubah atau menghapus.
+      allow update, delete: if false;
+    }
+
+    // =========================
+    // speed_violation_state/{driverUid}   (R3 — state cooldown sisi server)
+    // =========================
+    // SERVER-ONLY. Cloud Function menulis ini lewat Admin SDK, yang memang
+    // mem-bypass rules. Ditutup eksplisit (bukan sekadar "tidak ada match yang
+    // cocok") supaya niatnya terbaca: kalau driver bisa menghapus atau me-reset
+    // penanda cooldown-nya sendiri, dia bisa membanjiri tiga penerima notifikasi
+    // sesuka hati. Sesi berikutnya yang menambah rule luas ke koleksi ini harus
+    // sadar sedang membuka jalur itu.
+    match /speed_violation_state/{driverUid} {
+      allow read, write: if false;
+    }
+
+    // =========================
+    // deletion_requests/{uid}   (Blok 5 — gerbang toko aplikasi, PRD §20)
+    // =========================
+    // Jalur penghapusan akun DI DALAM APLIKASI yang dituntut Apple 5.1.1(v) dan
+    // Play. Koleksi ini MENCATAT PERMINTAAN; ia tidak menghapus apa pun, dan itu
+    // disengaja: akun driver dimiliki perusahaan, dan `attendances`/`workdays`
+    // yang menempel padanya adalah bukti upah. Perhatikan bahwa berkas ini sudah
+    // lama tidak punya `allow delete` pada `users/{uid}` dan tidak mengizinkan
+    // driver menghapus attendance/workday-nya sendiri — penghapusan mandiri akan
+    // MEMBATALKAN keputusan itu, bukan melengkapinya.
+    //
+    // Doc-id WAJIB sama dengan uid pemohon. Itu yang membuat "satu orang, satu
+    // permintaan berjalan" dijamin penyimpanan, bukan oleh pengecekan klien yang
+    // bisa dilewati dengan memanggil Firestore langsung.
+    match /deletion_requests/{uid} {
+
+      function ownRequest() { return signedIn() && uid == request.auth.uid; }
+
+      function isFreshPendingRequest() {
+        return request.resource.data.keys().hasOnly(
+            ['uid', 'status', 'requestedAtMillis', 'reason'])
+          && request.resource.data.keys().hasAll(['uid', 'status', 'requestedAtMillis'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.status == 'pending'
+          && request.resource.data.requestedAtMillis is int
+          && (!('reason' in request.resource.data)
+            || (request.resource.data.reason is string
+              && request.resource.data.reason.size() <= 500));
+      }
+
+      // Pemohon membaca miliknya sendiri; admin membaca dan meng-query semuanya.
+      allow get: if ownRequest() || (signedIn() && isAdmin());
+      allow list: if signedIn() && isAdmin();
+
+      allow create: if ownRequest() && isFreshPendingRequest();
+
+      // Dua jalur update yang sangat berbeda, sengaja dipisah supaya tidak ada
+      // satu pun cabang yang membiarkan klien menulis status akhir.
+      allow update: if
+        // (1) Pemohon MENGIRIM ULANG setelah permintaan sebelumnya ditangani.
+        //     Statusnya harus sudah selesai/ditolak — mengirim ulang saat masih
+        //     'pending' tidak menambah apa pun dan hanya menggeser stempel waktu.
+        //     Seluruh field milik admin harus IKUT HILANG, supaya permintaan baru
+        //     tidak lahir membawa catatan penanganan permintaan lama.
+        (ownRequest()
+          && resource.data.status != 'pending'
+          && isFreshPendingRequest())
+        // (2) Admin MENANGANI permintaan. Ia tidak boleh menyentuh uid, stempel
+        //     waktu permintaan, atau alasan yang ditulis pemohon — itu bukti apa
+        //     yang diminta, dan admin yang bisa menyuntingnya membuat catatan ini
+        //     tidak ada gunanya sebagai jejak.
+        || (signedIn() && isAdmin()
+          && request.resource.data.keys().hasOnly(
+              ['uid', 'status', 'requestedAtMillis', 'reason',
+               'handledByUid', 'handledAtMillis', 'handledNote'])
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.requestedAtMillis == resource.data.requestedAtMillis
+          && (('reason' in request.resource.data) == ('reason' in resource.data))
+          && (!('reason' in resource.data)
+            || request.resource.data.reason == resource.data.reason)
+          && request.resource.data.status in ['completed', 'rejected']
+          && request.resource.data.handledByUid == request.auth.uid
+          && request.resource.data.handledAtMillis is int
+          && (!('handledNote' in request.resource.data)
+            || (request.resource.data.handledNote is string
+              && request.resource.data.handledNote.size() <= 500)));
+
+      // Pemohon TIDAK boleh menghapus jejak permintaannya sendiri: kalau bisa,
+      // "saya sudah minta dihapus dan tidak ditindaklanjuti" menjadi klaim yang
+      // tidak bisa diperiksa dari dua arah.
+      allow delete: if signedIn() && isAdmin();
+    }
+
+    // =========================
+    // user_photos/{uid}   (PR-E — foto profil driver)
+    // =========================
+    // Satu dokumen kecil per driver: JPEG 256x256 hasil olahan klien. Dipisah dari
+    // `users/{uid}` supaya daftar driver tidak ikut membengkak oleh blob.
+    //
+    // Doc-id WAJIB sama dengan uid pemilik. Hanya driver yang boleh menulis fotonya
+    // sendiri; tidak ada jalur tulis untuk peran lain (termasuk admin) — memasang foto
+    // atas nama orang lain bukan fitur. Admin dan expat yang menaungi driver itu
+    // boleh MEMBACA (`get`), tidak boleh `list`: tidak ada layar yang membutuhkan
+    // daftar semua foto, dan menolaknya mencegah penarikan massal blob.
+    //
+    // Batas 150000 byte ditegakkan DI SINI juga, bukan hanya oleh pemroses klien
+    // (ProfilePhotoProcessor): klien yang dibongkar tidak boleh menyimpan dokumen
+    // besar. Dokumen hasil gabungan dinilai utuh (request.resource.data), jadi
+    // field warisan tidak mungkin menumpang.
+    match /user_photos/{uid} {
+
+      function ownPhoto() { return signedIn() && uid == request.auth.uid; }
+
+      function isValidPhoto() {
+        return request.resource.data.keys().hasOnly(['jpeg', 'updatedAtMillis'])
+          && request.resource.data.keys().hasAll(['jpeg', 'updatedAtMillis'])
+          && request.resource.data.jpeg is bytes
+          && request.resource.data.jpeg.size() > 0
+          && request.resource.data.jpeg.size() <= 150000
+          && request.resource.data.updatedAtMillis is int;
+      }
+
+      allow get: if ownPhoto()
+        || (signedIn() && isAdmin())
+        || (signedIn() && isExpat() && isManagedDriver(uid));
+
+      allow create, update: if ownPhoto() && isDriver() && isValidPhoto();
+
+      allow delete: if ownPhoto() && isDriver();
+    }
+  }
+}
