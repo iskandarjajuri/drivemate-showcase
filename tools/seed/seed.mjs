@@ -77,6 +77,11 @@ const DRIVERS = [
   {uid: "demo-driver-dimas-0000005", email: "driver5@example.com", name: "Dimas Kurniawan", lang: "id"},
 ].map((d) => ({...d, type: "driver"}));
 const MAIN = DRIVERS[0];
+// An admin account exists ONLY to verify that the showcase (which has no admin UI) signs such a session out.
+// It is deliberately absent from user_directory so it never shows up in chat contact lists.
+const ADMIN = {
+  uid: "demo-admin-0000000000007", email: "admin@example.com", name: "Demo Admin", type: "admin", lang: "en",
+};
 // A brand-new driver with no history and no chat: used to capture honest empty states.
 const NEWBIE = {
   uid: "demo-driver-putri-000000006", email: "driver.new@example.com", name: "Putri Maharani",
@@ -103,6 +108,7 @@ async function wipe() {
 // ── 1. Auth + users ─────────────────────────────────────────────────────────────────────
 async function seedUsers() {
   const people = [EXPAT, ...DRIVERS, NEWBIE];
+  await auth.createUser({uid: ADMIN.uid, email: ADMIN.email, password: PASSWORD, displayName: ADMIN.name, emailVerified: true});
   for (const p of people) {
     await auth.createUser({
       uid: p.uid,
@@ -125,6 +131,9 @@ async function seedUsers() {
       createdAt: nowMs - 150 * DAY_MS,
     });
   }
+  batch.set(db.doc(`users/${ADMIN.uid}`), {
+    type: "admin", name: ADMIN.name, email: ADMIN.email, lang: ADMIN.lang, createdAt: nowMs - 300 * DAY_MS,
+  });
   // user_directory is what the Cloud Function mirrors from users/* (no e-mail, no tokens).
   for (const p of people) {
     batch.set(db.doc(`user_directory/${p.uid}`), {displayName: p.name, role: p.type, lang: p.lang, active: true});

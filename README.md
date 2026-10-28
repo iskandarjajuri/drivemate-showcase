@@ -122,7 +122,7 @@ Compose UI・iOS の自動テストは薄く、カバレッジ率は **未計測
   勤務日生成の Cloud Functions（デモでは履歴をシード）。
   共有モジュールの Kotlin は iOS ターゲット（`iosArm64`・`iosSimulatorArm64`）でコンパイルが通ることを Linux 上で確認しました。
   Swift／Xcode でのビルドは **未検証** です。
-- 駐在員は **ホームとメッセージのみ**を収録。承認ワークフローは含みません。
+- デモ（画面・動画）で見せているのは、駐在員の **ホームとメッセージのみ**です。承認（レビュー）ワークフローのコードはリポジトリに含まれますが、デモでは **実演していません**。
 - チャットの翻訳は **デモでは事前保存**。ライブ翻訳には外部 LLM の API キーが必要です。
 - 動作確認は **エミュレータ**（API 37）で行いました。このビルドの実機検証は未実施です。
 - CI（GitHub Actions）は用意済みですが、**公開後の初回実行の結果は未確認**です（結果が出たら [マイルストーン](docs/milestones.md) に追記します）。
@@ -261,7 +261,7 @@ Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit t
   parity would be wrong), and the workday-generation Cloud Functions (the demo seeds the history instead).
   The shared module's Kotlin compiles for the iOS targets (`iosArm64`, `iosSimulatorArm64`) — verified on Linux. A
   Swift/Xcode build is **not verified**.
-- The expatriate role covers **Home and Messages only**; the approval workflow is not included.
+- The demo (screens and videos) shows the expatriate role's **Home and Messages only**. The approval (review) workflow code is in the repository, but it is **not demonstrated**.
 - Chat translations are **pre-seeded in the demo**. Live translation needs an external LLM API key.
 - Everything was verified on an **emulator** (API 37). This build has not been verified on a physical device.
 - A CI workflow (GitHub Actions) is provided, but **the result of its first run after publication is not yet known**

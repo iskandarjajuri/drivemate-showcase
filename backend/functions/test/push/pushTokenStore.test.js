@@ -1,7 +1,11 @@
 /**
  * Binding Firestore untuk token FCM privat (hanya `fcm_tokens`; `users.fcmToken` diabaikan), diuji di emulator.
  */
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:9098";
+if (!process.env.FIRESTORE_EMULATOR_HOST) {
+  throw new Error(
+    "FIRESTORE_EMULATOR_HOST is not set. Run this test through `npm run test:rules`, " +
+    "which starts its own emulator; it must never fall back to someone else's one.");
+}
 const {initializeApp, getApps} = require("firebase-admin/app");
 const {getFirestore, Timestamp} = require("firebase-admin/firestore");
 const {createPushTokenStore, tokenDocId} = require("../../lib/push/pushTokenStore");

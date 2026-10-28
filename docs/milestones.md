@@ -45,13 +45,14 @@
 - **目的**：ドライバーが 1 日の業務（打刻 → 点検 → 安全申告 → 退勤）を迷わず終えられるようにする。
 - **完了条件**：エミュレータ上で、ログイン → 出勤打刻（GPS）→ 車両点検 → 安全申告（12 ステップ）→ 退勤が、実際の Security Rules を通して最後まで完了する。
 - **証跡**：デモ動画と画面（`docs/media/`）。点検・申告は「1 日 1 回」をドキュメント ID と Security Rules で保証。
-- **課題**：逆ジオコーディングは端末側のサービスに依存。失敗時は座標のみの名称にフォールバックする設計。
+- **確認できたこと**：Tap In／Tap Out の位置は逆ジオコーディングされ、出退勤イベントの `locationName` に住所が保存される（デモでは公共のランドマークの住所）。
+- **課題**：逆ジオコーディングは端末側のサービスに依存する。失敗時の挙動は、このショーケースでは **未検証**。
 
 #### M2　駐在員（Expat）：ホームとメッセージ ✅（Android）
 - **目的**：駐在員が、担当ドライバーの状況を一目で把握し、すぐに連絡できるようにする。
 - **完了条件**：ホーム（要確認の件数・お知らせ）とメッセージが動作する。
 - **証跡**：デモ動画・画面。
-- **課題**：本ショーケースは Expat の **ホームとメッセージのみ**。承認ワークフロー等は含めていない。
+- **課題**：デモで見せているのは Expat の **ホームとメッセージのみ**。承認（レビュー）ワークフローのコードはリポジトリにあるが、デモでは実演していない。
 
 #### M3　多言語と端末言語への自動追従 ✅
 - **目的**：既定では端末の言語設定に自然に従う（アプリ内の「アプリの言語」設定は初期値が「システムに従う」）。
@@ -148,13 +149,14 @@ count as done, and shows the status **as it is**.
 - **Definition of Done:** on the emulator, sign-in → clock-in (GPS) → vehicle checklist → 12-step safety declaration →
   clock-out all complete through the real Security Rules.
 - **Evidence:** demo videos and screenshots (`docs/media/`). "Once per day" is enforced by the document id and the rules.
-- **Issue:** reverse geocoding depends on a device-side service; on failure the app falls back to coordinates only.
+- **Verified:** the Tap In / Tap Out position is reverse-geocoded and the address is stored in the attendance event's `locationName` (in the demo, the address of a public landmark).
+- **Issue:** reverse geocoding depends on a device-side service. Behaviour on failure is **not verified** in this showcase.
 
 #### M2　Expatriate: Home and Messages ✅ (Android)
 - **Purpose:** let an expatriate see the drivers' status at a glance and reach them quickly.
 - **Definition of Done:** Home (items needing attention, announcements) and Messages work.
 - **Evidence:** demo videos and screenshots.
-- **Issue:** this showcase covers the expatriate **Home and Messages only**; the approval workflow etc. is not included.
+- **Issue:** the demo shows the expatriate **Home and Messages only**. The approval (review) workflow code is in the repository but is not demonstrated.
 
 #### M3　Following the device language ✅
 - **Purpose:** by default the app follows the device's language setting (the in-app "App language" setting starts at "Follow system").

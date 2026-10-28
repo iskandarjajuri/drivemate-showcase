@@ -2,7 +2,11 @@
  * Binding Firestore untuk push chat, diuji terhadap Firestore emulator (Admin SDK): klaim idempoten
  * `pushSentAt`, pembacaan token/direktori, dan penghapusan token. FCM tidak dipanggil.
  */
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:9098";
+if (!process.env.FIRESTORE_EMULATOR_HOST) {
+  throw new Error(
+    "FIRESTORE_EMULATOR_HOST is not set. Run this test through `npm run test:rules`, " +
+    "which starts its own emulator; it must never fall back to someone else's one.");
+}
 
 const {initializeApp, getApps} = require("firebase-admin/app");
 const {getFirestore} = require("firebase-admin/firestore");
