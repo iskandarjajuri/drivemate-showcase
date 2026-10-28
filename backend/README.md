@@ -23,6 +23,8 @@ Firebase の **Firestore Security Rules** と、チャットまわりの **Cloud
   デモでは、この形のデータを **あらかじめシード**しています（`tools/seed/seed.mjs`）。
 - テスト：`npm ci && npm test`（エミュレータ不要のユニットテスト）。
 
+<a id="english"></a>
+
 ## English
 
 Firebase **Firestore Security Rules** and the chat-related **Cloud Functions (TypeScript)**. Everything can be exercised
