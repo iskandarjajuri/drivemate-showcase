@@ -1,0 +1,13 @@
+{
+  "name": "drivemate-showcase-seed",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Idempotent, fictional demo data for the Firebase Emulator Suite. Refuses to run against anything but an emulator.",
+  "type": "module",
+  "scripts": {
+    "seed": "node seed.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}
