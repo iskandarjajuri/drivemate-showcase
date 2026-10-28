@@ -1,0 +1,52 @@
+name: CI
+
+# Triggers are limited to manual runs until the repository is public (Actions minutes on public
+# repositories are free). Once public, `push` and `pull_request` are enabled below.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Shared + Android (build and tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Placeholder Firebase config (template only, no secrets)
+        run: cp composeApp/google-services.json.example composeApp/google-services.json
+      - name: Architecture rules
+        run: ./scripts/check-architecture.sh
+      - name: Shared tests
+        run: ./gradlew :shared:allTests --no-daemon
+      - name: Android unit tests + debug build
+        run: ./gradlew :composeApp:testDebugUnitTest :composeApp:assembleDebug --no-daemon
+
+  backend:
+    name: Backend (Cloud Functions build and unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/functions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: backend/functions/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
