@@ -1,8 +1,11 @@
 name: CI
 
-# Triggers are limited to manual runs until the repository is public (Actions minutes on public
-# repositories are free). Once public, `push` and `pull_request` are enabled below.
+# Runs on every push and pull request, and can be started manually.
+# (It was manual-only while the repository was private, to avoid spending paid Actions minutes.)
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
