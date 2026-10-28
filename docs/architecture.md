@@ -73,7 +73,7 @@ sequenceDiagram
 
 ### 4. このショーケースに含まれないもの（正直に）
 
-- **管理者（Admin）画面**：UI が開発中のため含めていません。Admin ロールでログインした場合は自動でサインアウトします。
+- **管理者（Admin）画面**：UI が開発中のため含めていません。Admin ロールでログインした場合は自動でサインアウトします（エミュレータで動作を確認済み。シードの `admin@example.com` はこの確認のためだけに存在します）。
   共有ドメインには管理者向けのユースケースが残っていますが、画面からは使いません。
 - **iOS アプリ（SwiftUI）**：本リポジトリには含めていません。現状は Android より範囲が狭く、
   同等の機能が揃っているとは言えないためです（[マイルストーン](milestones.md) の M7 を参照）。
@@ -153,7 +153,7 @@ The rules are verified by a script, not only described ([`scripts/check-architec
 
 ### 4. What this showcase does not include (honestly)
 
-- **Admin screens** — the UI is still in development, so it is left out. An Admin login is signed out automatically.
+- **Admin screens** — the UI is still in development, so it is left out. An Admin login is signed out automatically (verified on the emulator; the seed's `admin@example.com` exists only for that check).
   The shared domain still contains admin-oriented use cases; no screen uses them here.
 - **The iOS app (SwiftUI)** — not included. Its scope is currently narrower than Android's, so claiming parity
   would be wrong (see M7 in the [milestones](milestones.md)). The shared module's Kotlin compiles for the iOS targets

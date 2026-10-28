@@ -28,7 +28,7 @@
 | M3 | 多言語（日本語／インドネシア語／英語）と端末言語への自動追従 | ✅ 完了 | 2026年2月〜 |
 | M4 | チャットと自動翻訳（インドネシア語 ⇄ 日本語） | ✅ 実装済み（デモは翻訳を事前保存） | 2026年4月〜5月 |
 | M5 | 品質保証：自動テスト・アーキテクチャ検査・CI | 🔄 進行中 | 2026年5月〜 |
-| M6 | ショーケースの公開（このリポジトリ・デモ動画・ドキュメント） | 🔄 進行中 | 2026年10月 |
+| M6 | ショーケースの公開（このリポジトリ・デモ動画・ドキュメント） | ✅ 完了 | 2026年10月 |
 | M7 | iOS（SwiftUI）の拡充 | 🔄 進行中（本リポジトリには含まない） | 2026年4月〜 |
 | M8 | 技術的負債の返済（型付きエラー、コメントの英語化 ほか） | 📅 予定 | 未定 |
 | M9 | Compose Multiplatform による共有 UI | 📅 予定（構想段階） | 未定 |
@@ -69,13 +69,13 @@
 #### M5　品質保証 🔄
 - **目的**：変更しても壊れないことを、自動で確かめられるようにする。
 - **完了条件（現時点の到達点）**：
-  - `shared` のテスト **539 件**、`composeApp` のユニットテスト **302 件**、バックエンドのユニットテスト **69 件**、Security Rules のテスト **407 件**。いずれも失敗 0（合計 1,317 件）。
+  - `shared` のテスト **539 件**、`composeApp` のユニットテスト **302 件**、バックエンドのユニットテスト **64 件**、Security Rules など Firestore 連携のテスト **412 件**。いずれも失敗 0（合計 1,317 件）。
   - アーキテクチャ検査スクリプトが合格。
-  - GitHub Actions のワークフローを用意（リポジトリ公開後に初回実行。結果は実行後に追記します）。
+  - GitHub Actions：初回の実行で 1 ジョブが失敗（テストが固定ポートのエミュレータを前提にしていた）→ 修正後の 2 回目は **3 ジョブすべて成功**（2026年10月28日）。
 - **未達**：Compose UI・iOS の自動テストは薄い。テストカバレッジ率は **未計測**。
-- **次の一手**：公開後に CI を有効化し、結果をこの表へ反映する。
+- **次の一手**：Compose UI・iOS のテストを増やし、カバレッジ率を計測する。
 
-#### M6　ショーケースの公開 🔄
+#### M6　ショーケースの公開 ✅
 - **目的**：実装・設計・品質への姿勢を、第三者が確認できる形で公開する。
 - **完了条件**：リポジトリ公開、README（日本語・英語）、デモ動画、ドキュメント、機密情報の検査が完了している。
 - **証跡**：本リポジトリ。社名・個人情報・認証情報が含まれないことを、公開前に自動検査で確認。
@@ -99,7 +99,8 @@
 - **報連相**（報告・連絡・相談）：状況が変わったら、この表を更新し、**証跡へのリンク**を添えて報告します。
 - **見える化**：進捗はこの文書と [GitHub の Milestones](https://github.com/iskandarjajuri/drivemate-showcase/milestones) で公開し、「完了」には必ず根拠を添えます。
 - **カイゼン**：完了のたびに「うまくいったこと／課題」を振り返り、課題は M8 に積みます。例：デモ作成中に、
-  ログイン失敗の分類が SDK メッセージ依存で壊れていることを発見し、判定を修正してテストを追加しました。
+  ログイン失敗の分類が SDK メッセージ依存で壊れていることを発見し、判定を修正してテストを追加しました。また CI の初回実行で、
+  一部のテストが固定ポートのエミュレータに接続しうることが分かり、エミュレータが無ければ実行を拒否する形に直しました。
 - **品質を最優先**：機能の数よりも、安定性と画面の分かりやすさを優先します。
 
 ---
@@ -130,7 +131,7 @@ count as done, and shows the status **as it is**.
 | M3 | Multilingual (Japanese / Indonesian / English) following the device language | ✅ Done | Feb 2026 → |
 | M4 | Chat with automatic translation (Indonesian ⇄ Japanese) | ✅ Implemented (demo uses pre-seeded translations) | Apr – May 2026 |
 | M5 | Quality: automated tests, architecture check, CI | 🔄 In progress | May 2026 → |
-| M6 | Publish the showcase (this repository, demo videos, docs) | 🔄 In progress | Oct 2026 |
+| M6 | Publish the showcase (this repository, demo videos, docs) | ✅ Done | Oct 2026 |
 | M7 | iOS (SwiftUI) expansion | 🔄 In progress (not included here) | Apr 2026 → |
 | M8 | Pay down technical debt (typed errors, English comments, …) | 📅 Planned | TBD |
 | M9 | Shared UI with Compose Multiplatform | 📅 Planned (idea stage) | TBD |
@@ -174,13 +175,13 @@ count as done, and shows the status **as it is**.
 #### M5　Quality 🔄
 - **Purpose:** be able to confirm automatically that changes do not break things.
 - **Reached so far:**
-  - **539** `shared` tests, **302** `composeApp` unit tests, **69** backend unit tests and **407** Security Rules tests — 0 failures in all (1,317 in total).
+  - **539** `shared` tests, **302** `composeApp` unit tests, **64** backend unit tests and **412** Security Rules / Firestore-backed tests — 0 failures in all (1,317 in total).
   - The architecture check passes.
-  - A GitHub Actions workflow is provided (first run after the repository is public; results will be added here).
+  - GitHub Actions: the first run had one failing job (tests assumed an emulator on a fixed port) → after the fix, the second run passed **all three jobs** (28 October 2026).
 - **Not reached:** automated tests for Compose UI and iOS are thin. Coverage percentage is **not measured**.
-- **Next:** enable CI once public and reflect the results in this table.
+- **Next:** add Compose UI and iOS tests, and measure the coverage percentage.
 
-#### M6　Publish the showcase 🔄
+#### M6　Publish the showcase ✅
 - **Purpose:** make the implementation, design and quality practices verifiable by third parties.
 - **Definition of Done:** repository public; README (Japanese and English), demo videos, docs, and a secrets/PII scan completed.
 - **Evidence:** this repository. Before publishing, automated scans confirmed no company names, personal data or credentials.
@@ -205,5 +206,6 @@ count as done, and shows the status **as it is**.
 - **Visibility (*mieruka*):** progress is public in this document and in [GitHub Milestones](https://github.com/iskandarjajuri/drivemate-showcase/milestones); every "done" carries its proof.
 - **Kaizen (continuous improvement):** after each milestone, review what worked and what did not, and queue issues in M8.
   Example: while making the demo, I found that login-failure classification broke on SDK message changes, fixed the
-  detection and added tests.
+  detection and added tests. The first CI run also revealed that some tests could reach an emulator on a fixed port, so
+  they now refuse to run when no emulator of their own is available.
 - **Quality first:** stability and clarity of the screens take priority over the number of features.

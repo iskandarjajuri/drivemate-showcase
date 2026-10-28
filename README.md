@@ -110,10 +110,10 @@ cp local.properties.example local.properties
 ./scripts/check-architecture.sh
 ./gradlew :shared:allTests :composeApp:testDebugUnitTest
 npm --prefix backend/functions ci && npm --prefix backend/functions test      # ユニットテスト（エミュレータ不要）
-npm --prefix backend/functions run test:rules                                   # Security Rules（Firestore エミュレータ・Java 21 が必要）
+npm --prefix backend/functions run test:rules                                   # Security Rules など Firestore 連携テスト（専用エミュレータを自動起動・Java 21 が必要）
 ```
 
-実測値（2026年10月28日）：`shared` **539 件**、`composeApp` ユニット **302 件**、バックエンドのユニット **69 件**、Security Rules **407 件**（22 スイート）。いずれも失敗 0。
+実測値（2026年10月28日）：`shared` **539 件**、`composeApp` ユニット **302 件**、バックエンドのユニット **64 件**、Security Rules など Firestore 連携テスト **412 件**（23 スイート）。いずれも失敗 0。
 Compose UI・iOS の自動テストは薄く、カバレッジ率は **未計測**です。
 
 ### 現状と制限（正直に）
@@ -125,7 +125,7 @@ Compose UI・iOS の自動テストは薄く、カバレッジ率は **未計測
 - デモ（画面・動画）で見せているのは、駐在員の **ホームとメッセージのみ**です。承認（レビュー）ワークフローのコードはリポジトリに含まれますが、デモでは **実演していません**。
 - チャットの翻訳は **デモでは事前保存**。ライブ翻訳には外部 LLM の API キーが必要です。
 - 動作確認は **エミュレータ**（API 37）で行いました。このビルドの実機検証は未実施です。
-- CI（GitHub Actions）は用意済みですが、**公開後の初回実行の結果は未確認**です（結果が出たら [マイルストーン](docs/milestones.md) に追記します）。
+- CI（GitHub Actions）：初回の実行では 1 つのジョブが失敗しました（原因：一部のテストが固定ポートのエミュレータを前提にしていた）。修正後の 2 回目は **3 ジョブすべて成功**です（2026年10月28日）。
 - ログイン失敗の分類がエラーメッセージ文字列に依存している（型付きエラーへの移行は M8 で予定）。
 - コード内コメントとテスト名の一部はインドネシア語です。
 
@@ -249,11 +249,11 @@ Sign-ins (every password is `Demo-Pass-1234`): `driver@example.com` (driver), `e
 ./scripts/check-architecture.sh
 ./gradlew :shared:allTests :composeApp:testDebugUnitTest
 npm --prefix backend/functions ci && npm --prefix backend/functions test      # unit tests (no emulator)
-npm --prefix backend/functions run test:rules                                   # Security Rules (Firestore emulator; needs Java 21)
+npm --prefix backend/functions run test:rules                                   # Security Rules and other Firestore-backed tests (starts its own emulator; needs Java 21)
 ```
 
-Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit tests, **69** backend unit tests and
-**407** Security Rules tests (22 suites) — all passing. Automated tests for Compose UI and iOS are thin, and the coverage percentage is **not measured**.
+Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit tests, **64** backend unit tests and
+**412** Security Rules / Firestore-backed tests (23 suites) — all passing. Automated tests for Compose UI and iOS are thin, and the coverage percentage is **not measured**.
 
 ### Status and limits (honestly)
 
@@ -264,8 +264,8 @@ Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit t
 - The demo (screens and videos) shows the expatriate role's **Home and Messages only**. The approval (review) workflow code is in the repository, but it is **not demonstrated**.
 - Chat translations are **pre-seeded in the demo**. Live translation needs an external LLM API key.
 - Everything was verified on an **emulator** (API 37). This build has not been verified on a physical device.
-- A CI workflow (GitHub Actions) is provided, but **the result of its first run after publication is not yet known**
-  (it will be added to the [milestones](docs/milestones.md) once it has run).
+- CI (GitHub Actions): the first run had one failing job (cause: some tests assumed an emulator on a fixed local port).
+  After the fix, the second run passed **all three jobs** (28 October 2026).
 - Login-failure classification depends on error-message text (moving to typed errors is planned in M8).
 - Some code comments and test names are in Indonesian.
 
