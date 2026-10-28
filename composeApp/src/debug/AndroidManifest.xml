@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- HANYA build debug (source set `debug`; tidak ikut `release`). Dipakai alat uji Maestro untuk menaruh teks Unicode
+         (Jepang) ke clipboard — Maestro tak bisa mengetik non-ASCII. Lihat scripts/maestro/README.md. -->
+    <application android:networkSecurityConfig="@xml/network_security_config">
+        <receiver
+            android:name=".debug.ClipboardTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.drivemate.showcase.debug.SET_CLIPBOARD" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

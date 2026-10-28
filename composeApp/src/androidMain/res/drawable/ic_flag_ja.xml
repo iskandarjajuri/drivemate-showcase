@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bendera Jepang — putih dengan lingkaran merah di tengah (rasio 3:2). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="30"
+    android:viewportHeight="20">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0h30v20h-30z" />
+    <path
+        android:fillColor="#BC002D"
+        android:pathData="M15,10m-6,0a6,6 0 1,1 12,0a6,6 0 1,1 -12,0" />
+</vector>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Union Jack — bendera Inggris untuk pilihan bahasa English (rasio 2:1). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="60"
+    android:viewportHeight="30">
+    <path
+        android:fillColor="#012169"
+        android:pathData="M0,0h60v30h-60z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:pathData="M0,0L60,30M60,0L0,30" />
+    <path
+        android:strokeColor="#C8102E"
+        android:strokeWidth="3"
+        android:pathData="M0,0L60,30M60,0L0,30" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="10"
+        android:pathData="M30,0L30,30M0,15L60,15" />
+    <path
+        android:strokeColor="#C8102E"
+        android:strokeWidth="6"
+        android:pathData="M30,0L30,30M0,15L60,15" />
+</vector>

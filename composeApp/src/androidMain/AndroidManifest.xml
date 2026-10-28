@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- PR-E foto profil: TakePicture membuka aplikasi kamera bawaan, tanpa izin runtime kamera.
+         Visibilitas paket (Android 11+) perlu <queries> agar ACTION_IMAGE_CAPTURE dapat di-resolve. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
+    <!-- ✅ Internet & Network (wajib dari awal) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- ✅ Lokasi (untuk On-Duty tracking) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+
+    <!-- ⚠️ Background location (hanya jika benar-benar perlu) -->
+    <!-- <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/> -->
+
+    <!-- ✅ Foreground service (untuk tracking di Android 10+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- ✅ Android 14+ FGS location permission requirement -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+
+    <!-- ✅ Notifikasi (untuk push/broadcast di Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+
+    <application
+        android:name=".DriveMateApplication"
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config"
+        android:theme="@style/Theme.DriveMate"
+        tools:targetApi="tiramisu">
+
+        <!-- Push yang ditampilkan SISTEM (app di background): channel & ikon bawaan. Channel `chat`/`work`
+             ditentukan per pesan oleh function (android.notification.channel_id), didaftarkan di
+             NotificationChannels saat startup. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="fcm_default" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notification" />
+
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
+
+        <!-- ✅ Foreground Location Service untuk On-Duty tracking (Android 14+ butuh tipe) -->
+        <service
+            android:name=".tracking.LocationTrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- FCM push receiver — token refresh (onNewToken) + notification display -->
+        <service
+            android:name=".messaging.DriveMateFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Menyimpan pilihan bahasa per-app secara otomatis lintas restart,
+             tanpa perlu AppCompatActivity men-override attachBaseContext
+             sendiri. Lihat: developer.android.com per-app language AppCompat. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>
