@@ -1,0 +1,9 @@
+# Copy to `local.properties` (gitignored). Points the DEBUG build at the local Firebase emulators.
+# The release build type hardcodes these flags to false, so they can never reach a release build.
+USE_FIRESTORE_EMULATOR=true
+# 10.0.2.2 is the Android emulator's alias for the host machine's localhost.
+FIRESTORE_EMULATOR_HOST=10.0.2.2
+FIRESTORE_EMULATOR_PORT=9398
+AUTH_EMULATOR_PORT=9399
+# Optional: only needed for map screens (none are part of this showcase).
+# MAPS_API_KEY=

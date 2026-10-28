@@ -1,0 +1,31 @@
+# Build output
+build/
+.gradle/
+*.class
+*.apk
+*.aab
+
+# Machine-local configuration and secrets (never commit)
+local.properties
+composeApp/google-services.json
+**/GoogleService-Info.plist
+.env
+.env.*
+*.jks
+*.keystore
+**/sa-key.json
+**/serviceAccount*.json
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+.kotlin/
+
+# Node
+node_modules/
+
+# Emulator logs
+*-debug.log
+.firebase/
+backend/functions/lib/
