@@ -109,10 +109,11 @@ cp local.properties.example local.properties
 ```bash
 ./scripts/check-architecture.sh
 ./gradlew :shared:allTests :composeApp:testDebugUnitTest
-npm --prefix backend/functions ci && npm --prefix backend/functions test
+npm --prefix backend/functions ci && npm --prefix backend/functions test      # ユニットテスト（エミュレータ不要）
+npm --prefix backend/functions run test:rules                                   # Security Rules（Firestore エミュレータ・Java 21 が必要）
 ```
 
-実測値（2026年10月28日）：`shared` **539 件**、`composeApp` ユニット **302 件**、バックエンド **69 件**。いずれも失敗 0。
+実測値（2026年10月28日）：`shared` **539 件**、`composeApp` ユニット **302 件**、バックエンドのユニット **69 件**、Security Rules **407 件**（22 スイート）。いずれも失敗 0。
 Compose UI・iOS の自動テストは薄く、カバレッジ率は **未計測**です。
 
 ### 現状と制限（正直に）
@@ -247,11 +248,12 @@ Sign-ins (every password is `Demo-Pass-1234`): `driver@example.com` (driver), `e
 ```bash
 ./scripts/check-architecture.sh
 ./gradlew :shared:allTests :composeApp:testDebugUnitTest
-npm --prefix backend/functions ci && npm --prefix backend/functions test
+npm --prefix backend/functions ci && npm --prefix backend/functions test      # unit tests (no emulator)
+npm --prefix backend/functions run test:rules                                   # Security Rules (Firestore emulator; needs Java 21)
 ```
 
-Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit tests, **69** backend tests —
-all passing. Automated tests for Compose UI and iOS are thin, and the coverage percentage is **not measured**.
+Measured on 28 October 2026: **539** `shared` tests, **302** `composeApp` unit tests, **69** backend unit tests and
+**407** Security Rules tests (22 suites) — all passing. Automated tests for Compose UI and iOS are thin, and the coverage percentage is **not measured**.
 
 ### Status and limits (honestly)
 

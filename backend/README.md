@@ -21,7 +21,7 @@ Firebase の **Firestore Security Rules** と、チャットまわりの **Cloud
 - 関数はすべて **Firestore トリガー** です。HTTPS の呼び出し口（callable）はなく、アプリから直接は呼びません。
 - 翻訳の結果は、メッセージのドキュメントに `translations.{ja|id}`・`translationStatus` などとして書き込まれます。
   デモでは、この形のデータを **あらかじめシード**しています（`tools/seed/seed.mjs`）。
-- テスト：`npm ci && npm test`（エミュレータ不要のユニットテスト）。
+- テスト：`npm ci && npm test`（ユニットテスト 69 件・エミュレータ不要）／`npm run test:rules`（Security Rules 407 件・Firestore エミュレータと Java 21 が必要）。
 
 <a id="english"></a>
 
@@ -42,4 +42,4 @@ on the emulators (it never connects to a real Firebase project).
 - Every function is a **Firestore trigger**. There are no HTTPS callables; the app never calls a function directly.
 - The translation result is written onto the message document as `translations.{ja|id}`, `translationStatus`, etc. The
   demo **pre-seeds** data of exactly this shape (`tools/seed/seed.mjs`).
-- Tests: `npm ci && npm test` (unit tests that need no emulator).
+- Tests: `npm ci && npm test` (69 unit tests, no emulator) and `npm run test:rules` (407 Security Rules tests; needs the Firestore emulator and Java 21).

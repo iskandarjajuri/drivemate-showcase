@@ -9,7 +9,8 @@
     "logs": "firebase functions:log",
     "test:translate": "npm run build && jest --runInBand test/translate/*.test.js test/chat/chatPush.test.js test/push/sendPushToUser.test.js test/push/pushTokenStore.test.js",
     "eval:translate": "npm run build && node lib/translate/evalTranslate.js",
-    "test": "npm run build && jest --runInBand test/translate/*.test.js test/chat/chatPush.test.js test/push/sendPushToUser.test.js test/push/pushTokenStore.test.js"
+    "test": "npm run build && jest --runInBand test/translate/*.test.js test/chat/chatPush.test.js test/push/sendPushToUser.test.js test/push/pushTokenStore.test.js",
+    "test:rules": "firebase emulators:exec --config ../firebase.test.json --only firestore --project demo-drivemate-test \"jest --runInBand test/firestore.*.rules.test.js test/chat/chatPushFirestore.test.js\""
   },
   "engines": {
     "node": "24"

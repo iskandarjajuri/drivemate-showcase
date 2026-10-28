@@ -68,7 +68,7 @@
 #### M5　品質保証 🔄
 - **目的**：変更しても壊れないことを、自動で確かめられるようにする。
 - **完了条件（現時点の到達点）**：
-  - `shared` のテスト **539 件**、`composeApp` のユニットテスト **302 件**、いずれも失敗 0（合計 841 件）。
+  - `shared` のテスト **539 件**、`composeApp` のユニットテスト **302 件**、バックエンドのユニットテスト **69 件**、Security Rules のテスト **407 件**。いずれも失敗 0（合計 1,317 件）。
   - アーキテクチャ検査スクリプトが合格。
   - GitHub Actions のワークフローを用意（リポジトリ公開後に初回実行。結果は実行後に追記します）。
 - **未達**：Compose UI・iOS の自動テストは薄い。テストカバレッジ率は **未計測**。
@@ -172,7 +172,7 @@ count as done, and shows the status **as it is**.
 #### M5　Quality 🔄
 - **Purpose:** be able to confirm automatically that changes do not break things.
 - **Reached so far:**
-  - **539** `shared` tests and **302** `composeApp` unit tests, 0 failures in both (841 in total).
+  - **539** `shared` tests, **302** `composeApp` unit tests, **69** backend unit tests and **407** Security Rules tests — 0 failures in all (1,317 in total).
   - The architecture check passes.
   - A GitHub Actions workflow is provided (first run after the repository is public; results will be added here).
 - **Not reached:** automated tests for Compose UI and iOS are thin. Coverage percentage is **not measured**.

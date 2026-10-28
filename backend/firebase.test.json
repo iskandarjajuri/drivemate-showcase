@@ -1,0 +1,10 @@
+{
+  "firestore": {
+    "database": "drivemate-database",
+    "rules": "firestore.rules"
+  },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 9498 },
+    "ui": { "enabled": false }
+  }
+}
