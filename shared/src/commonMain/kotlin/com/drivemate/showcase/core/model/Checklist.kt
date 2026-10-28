@@ -1,0 +1,30 @@
+package com.drivemate.showcase.core.model
+
+data class Checklist(
+    val vehicleId: String? = null,
+    val odometerKm: Int? = null,
+    val fuelLevel: String? = null,
+    val tiresFrontLeftOk: Boolean? = null,
+    val tiresFrontRightOk: Boolean? = null,
+    val tiresRearLeftOk: Boolean? = null,
+    val tiresRearRightOk: Boolean? = null,
+    val tirePressureNote: String? = null,
+    val brakesOk: Boolean? = null,
+    val lightsOk: Boolean? = null,
+    val turnSignalBrakeLightsOk: Boolean? = null,
+    val hornOk: Boolean? = null,
+    val wipersOk: Boolean? = null,
+    val mirrorsOk: Boolean? = null,
+    val seatbeltOk: Boolean? = null,
+    val engineOilOk: Boolean? = null,
+    val coolantOk: Boolean? = null,
+    val batteryOk: Boolean? = null,
+    val washerFluidOk: Boolean? = null,
+    val cleanlinessOk: Boolean? = null,
+    val documentsOk: Boolean? = null,
+    val fireExtinguisherOk: Boolean? = null,
+    val firstAidOk: Boolean? = null,
+    val warningTriangleOk: Boolean? = null,
+    val notes: String? = null,
+    val hasIssue: Boolean = false
+)
