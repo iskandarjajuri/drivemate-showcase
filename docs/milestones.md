@@ -96,7 +96,7 @@
 ### 進め方（報連相・見える化・カイゼン）
 
 - **報連相**（報告・連絡・相談）：状況が変わったら、この表を更新し、**証跡へのリンク**を添えて報告します。
-- **見える化**：進捗はこの文書と GitHub の Milestones で公開し、「完了」には必ず根拠を添えます。
+- **見える化**：進捗はこの文書と [GitHub の Milestones](https://github.com/iskandarjajuri/drivemate-showcase/milestones) で公開し、「完了」には必ず根拠を添えます。
 - **カイゼン**：完了のたびに「うまくいったこと／課題」を振り返り、課題は M8 に積みます。例：デモ作成中に、
   ログイン失敗の分類が SDK メッセージ依存で壊れていることを発見し、判定を修正してテストを追加しました。
 - **品質を最優先**：機能の数よりも、安定性と画面の分かりやすさを優先します。
@@ -200,7 +200,7 @@ count as done, and shows the status **as it is**.
 ### How the work is run (hō-ren-sō, visibility, kaizen)
 
 - **Hō-ren-sō** (report, inform, consult): when status changes, update this table and attach a **link to the evidence**.
-- **Visibility (*mieruka*):** progress is public in this document and in GitHub Milestones; every "done" carries its proof.
+- **Visibility (*mieruka*):** progress is public in this document and in [GitHub Milestones](https://github.com/iskandarjajuri/drivemate-showcase/milestones); every "done" carries its proof.
 - **Kaizen (continuous improvement):** after each milestone, review what worked and what did not, and queue issues in M8.
   Example: while making the demo, I found that login-failure classification broke on SDK message changes, fixed the
   detection and added tests.
