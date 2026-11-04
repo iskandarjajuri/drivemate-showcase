@@ -141,7 +141,7 @@ Compose UI・iOS の自動テストは薄く、カバレッジ率は **未計測
 
 **Iskandar Jajuri**（[@iskandarjajuri](https://github.com/iskandarjajuri)）— KMP・SwiftUI・Jetpack Compose でアプリを一人で作るエンジニア。
 インドネシアから、日本で働くことを目指しています。
-[LinkedIn](https://www.linkedin.com/in/iskandar-jajuri/) ・ [Qiita](https://qiita.com/iskandar) ・ [note](https://note.com/iskandar_dev)
+[LinkedIn](https://www.linkedin.com/in/iskandar-jajuri/) ・ [Zenn](https://zenn.dev/iskandar_dev) ・ [note](https://note.com/iskandar_dev)
 
 ---
 
@@ -282,4 +282,4 @@ for each milestone.
 
 **Iskandar Jajuri** ([@iskandarjajuri](https://github.com/iskandarjajuri)) — a mobile and full-stack engineer who builds apps
 end to end with KMP, SwiftUI and Jetpack Compose, in Indonesia and working toward a career in Japan.
-[LinkedIn](https://www.linkedin.com/in/iskandar-jajuri/) ・ [Qiita](https://qiita.com/iskandar) ・ [note](https://note.com/iskandar_dev)
+[LinkedIn](https://www.linkedin.com/in/iskandar-jajuri/) ・ [Zenn](https://zenn.dev/iskandar_dev) ・ [note](https://note.com/iskandar_dev)
